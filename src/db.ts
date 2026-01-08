@@ -157,23 +157,82 @@ export interface InventoryRecord {
   createdAt: number;
 }
 
+// Registro de eliminaciones pendientes (para sincronizar cuando vuelva conexión)
+export interface PendingDeletion {
+  id?: number;
+  type: 'event'; // Puede extenderse a otros tipos en el futuro
+  recordId: number; // ID del registro a eliminar
+  recordTitle: string; // Para referencia
+  createdAt: number;
+  synced: number;
+}
+
+// Registro de descarte de aceros
+export interface SteelDiscard {
+  id?: number;
+  date: string;
+  serie: string;
+  equipo: string;
+  diametro: string;
+  fechaPostura: string;
+  fechaDescarte: string;
+  tipoAcero: 'Bit' | 'Martillo' | 'Tricono';
+  causaDescarte: string;
+  metros: number;
+  terreno: 'Blando' | 'Medio' | 'Duro';
+  // Campos específicos de Bit
+  medidaEntreInsertos?: string;
+  medidaMatriz?: string;
+  fotoSerie?: string;
+  fotoCuerpo?: string;
+  fotoBotones?: string;
+  // Campos específicos de Martillo
+  diametroCulata?: string;
+  diametroPortabit?: string;
+  // Campos específicos de Tricono (9 fotos con observaciones)
+  fotoCuerpoFaldon1?: string;
+  obsCuerpoFaldon1?: string;
+  fotoCuerpoFaldon2?: string;
+  obsCuerpoFaldon2?: string;
+  fotoCuerpoFaldon3?: string;
+  obsCuerpoFaldon3?: string;
+  fotoCono1?: string;
+  obsCono1?: string;
+  fotoCono2?: string;
+  obsCono2?: string;
+  fotoCono3?: string;
+  obsCono3?: string;
+  fotoNozzles?: string;
+  obsNozzles?: string;
+  fotoConos?: string;
+  obsConos?: string;
+  obsSerie?: string;
+  synced: number;
+  createdAt: number;
+}
+
 export class LomasBayasDB extends Dexie {
   reports!: Table<ShiftReport>;
   steelChanges!: Table<SteelChange>;
   steelMeasurements!: Table<SteelMeasurement>;
   events!: Table<Event>;
   inventoryRecords!: Table<InventoryRecord>;
+  pendingDeletions!: Table<PendingDeletion>;
+  steelDiscards!: Table<SteelDiscard>;
 
   constructor() {
     super('LomasBayasDB');
-    this.version(6).stores({
+    this.version(8).stores({
       reports: '++id, date, synced, createdAt',
       steelChanges: '++id, date, synced, createdAt',
       steelMeasurements: '++id, date, synced, createdAt',
       events: '++id, date, closed, synced, createdAt',
-      inventoryRecords: '++id, date, synced, createdAt'
+      inventoryRecords: '++id, date, synced, createdAt',
+      pendingDeletions: '++id, type, recordId, synced, createdAt',
+      steelDiscards: '++id, date, tipoAcero, synced, createdAt'
     });
   }
 }
 
 export const db = new LomasBayasDB();
+

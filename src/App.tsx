@@ -11,7 +11,7 @@ import {
   WifiOff,
   Trash2
 } from 'lucide-react';
-import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord } from './db';
+import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard } from './db';
 import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
 import './index.css';
 
@@ -22,7 +22,7 @@ const App: React.FC = () => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [wells, setWells] = useState<WellRecord[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
-  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario'>('reporte');
+  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros'>('reporte');
 
   // Estado para Cambio de Aceros
   const [steelChangeData, setSteelChangeData] = useState({
@@ -77,7 +77,25 @@ const App: React.FC = () => {
   const [inventoryData, setInventoryData] = useState<Record<string, number>>(createEmptyInventory());
   const [inventoryDate, setInventoryDate] = useState(new Date().toISOString().split('T')[0]);
   const [lastInventoryDate, setLastInventoryDate] = useState<string | null>(null);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
+  // Estado para modal de confirmación de eliminación
+  const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+
+  // Estado para Descarte de Aceros
+  const [discardData, setDiscardData] = useState<Omit<SteelDiscard, 'id' | 'synced' | 'createdAt'>>({
+    date: new Date().toISOString().split('T')[0],
+    serie: '',
+    equipo: '',
+    diametro: '',
+    fechaPostura: new Date().toISOString().split('T')[0],
+    fechaDescarte: new Date().toISOString().split('T')[0],
+    tipoAcero: 'Bit',
+    causaDescarte: '',
+    metros: 0,
+    terreno: 'Medio'
+  });
+  const [uploadingDiscardPhoto, setUploadingDiscardPhoto] = useState(false);
 
   const getCurrentTime = () => {
     const now = new Date();
@@ -104,6 +122,7 @@ const App: React.FC = () => {
       setIsOnline(true);
       // Intentar sincronizar automáticamente al recuperar conexión
       syncData().then(updatePendingCount);
+      syncPendingDeletions(); // Sincronizar eliminaciones pendientes
     };
     const handleOffline = () => setIsOnline(false);
 
@@ -121,6 +140,15 @@ const App: React.FC = () => {
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // Cargar datos cuando se cambia de página
+  useEffect(() => {
+    if (currentPage === 'inventario') {
+      loadLastInventory();
+    } else if (currentPage === 'eventos') {
+      loadOpenEvents();
+    }
+  }, [currentPage]);
 
   const addWell = () => {
     const lastWell = [...wells].reverse().find(w => w.type === 'well');
@@ -478,10 +506,59 @@ const App: React.FC = () => {
     }
   };
 
-  // Cargar eventos abiertos
+  // Descargar eventos desde Google Sheets
+  const downloadEventsFromSheet = async (): Promise<Event[]> => {
+    try {
+      const response = await fetch(`${GAS_URL}?action=getEvents`);
+      const result = await response.json();
+      if (result.success && result.events) {
+        console.log('Eventos descargados desde Excel:', result.events.length);
+        return result.events;
+      }
+      return [];
+    } catch (error) {
+      console.error('Error descargando eventos:', error);
+      return [];
+    }
+  };
+
+  // Cargar eventos abiertos (con sincronización bidireccional)
   const loadOpenEvents = async () => {
-    const events = await db.events.where('closed').equals(0).toArray();
-    setOpenEvents(events);
+    // Primero cargar eventos locales
+    let localEvents = await db.events.where('closed').equals(0).toArray();
+
+    // Si hay conexión, descargar eventos del Excel y fusionar
+    if (navigator.onLine) {
+      try {
+        const remoteEvents = await downloadEventsFromSheet();
+
+        // Fusionar: agregar eventos remotos que no existen localmente
+        for (const remoteEvent of remoteEvents) {
+          if (remoteEvent.closed === 0) { // Solo eventos abiertos
+            // Buscar si ya existe localmente (por título y fecha para evitar duplicados)
+            const exists = localEvents.some(
+              local => local.title === remoteEvent.title && local.date === remoteEvent.date
+            );
+
+            if (!exists) {
+              // Agregar a la BD local
+              await db.events.add({
+                ...remoteEvent,
+                synced: 1 // Ya está sincronizado porque viene del Excel
+              });
+              console.log('Evento importado del Excel:', remoteEvent.title);
+            }
+          }
+        }
+
+        // Recargar eventos locales después de la fusión
+        localEvents = await db.events.where('closed').equals(0).toArray();
+      } catch (error) {
+        console.warn('Error sincronizando eventos desde Excel:', error);
+      }
+    }
+
+    setOpenEvents(localEvents);
   };
 
   // Guardar nuevo evento
@@ -537,13 +614,148 @@ const App: React.FC = () => {
     }
   };
 
-  // Sincronizar Eventos
+  // Mostrar modal de confirmación para eliminar
+  const confirmDeleteEvent = (event: Event) => {
+    setEventToDelete(event);
+  };
+
+  // Cancelar eliminación
+  const cancelDeleteEvent = () => {
+    setEventToDelete(null);
+  };
+
+  // Eliminar evento (con soporte offline)
+  const handleDeleteEvent = async () => {
+    if (!eventToDelete) return;
+
+    const event = eventToDelete;
+    setEventToDelete(null); // Cerrar modal
+
+    try {
+      // Eliminar de la BD local
+      await db.events.delete(event.id!);
+
+      // Si el evento ya fue sincronizado, necesitamos eliminarlo del Excel también
+      if (event.synced === 1) {
+        if (isOnline) {
+          // Eliminar directamente del Excel
+          await deleteEventFromSheet(event.id!, event.title);
+        } else {
+          // Guardar la eliminación pendiente para sincronizar después
+          await db.pendingDeletions.add({
+            type: 'event',
+            recordId: event.id!,
+            recordTitle: event.title,
+            createdAt: Date.now(),
+            synced: 0
+          });
+          console.log('Eliminación pendiente guardada para sincronizar:', event.id);
+        }
+      }
+
+      // Actualizar la lista de eventos
+      await loadOpenEvents();
+
+      // Feedback visual
+      alert('Evento eliminado correctamente');
+    } catch (error) {
+      console.error('Error eliminando evento:', error);
+      alert('Error al eliminar el evento.');
+    }
+  };
+
+  // Eliminar evento del Google Sheet
+  const deleteEventFromSheet = async (eventId: number, eventTitle: string) => {
+    try {
+      const formData = new FormData();
+      formData.append('deleteEvent', JSON.stringify({ id: eventId, title: eventTitle }));
+
+      const response = await fetch(GAS_URL, {
+        method: 'POST',
+        body: formData
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        console.log('Evento eliminado del Excel:', eventId);
+      } else {
+        console.warn('Error eliminando del Excel:', result.error);
+      }
+    } catch (error) {
+      console.error('Error eliminando evento del Excel:', error);
+    }
+  };
+
+  // Sincronizar eliminaciones pendientes
+  const syncPendingDeletions = async () => {
+    const pending = await db.pendingDeletions.where('synced').equals(0).toArray();
+    if (pending.length === 0) return;
+
+    for (const deletion of pending) {
+      try {
+        if (deletion.type === 'event') {
+          await deleteEventFromSheet(deletion.recordId, deletion.recordTitle);
+        }
+        // Marcar como sincronizado
+        await db.pendingDeletions.update(deletion.id!, { synced: 1 });
+        console.log('Eliminación sincronizada:', deletion.recordId);
+      } catch (error) {
+        console.error('Error sincronizando eliminación:', error);
+      }
+    }
+  };
+
+  // Función auxiliar para subir foto a Google Drive
+  const uploadPhotoToDrive = async (base64Data: string): Promise<string | null> => {
+    try {
+      const mimeMatch = base64Data.match(/data:(image\/\w+);base64,/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+
+      const photoPayload = {
+        base64: base64Data,
+        mimeType: mimeType,
+        filename: `evento_sync_${Date.now()}.jpg`
+      };
+
+      const formData = new FormData();
+      formData.append('uploadPhoto', JSON.stringify(photoPayload));
+
+      const response = await fetch(GAS_URL, {
+        method: 'POST',
+        body: formData
+      });
+
+      const result = await response.json();
+      if (result.success && result.url) {
+        return result.url;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error subiendo foto a Drive:', error);
+      return null;
+    }
+  };
+
+  // Sincronizar Eventos (con subida de fotos pendientes)
   const syncEvents = async () => {
     const unsynced = await db.events.where('synced').equals(0).toArray();
     if (unsynced.length === 0) return;
 
     for (const record of unsynced) {
       try {
+        let eventToSync = { ...record };
+
+        // Si la foto es base64 (no una URL), subirla primero a Drive
+        if (record.photo && record.photo.startsWith('data:image')) {
+          console.log('Subiendo foto pendiente a Drive para evento:', record.id);
+          const driveUrl = await uploadPhotoToDrive(record.photo);
+          if (driveUrl) {
+            eventToSync.photo = driveUrl;
+            // Actualizar también en la BD local
+            await db.events.update(record.id!, { photo: driveUrl });
+          }
+        }
+
         const iframe = document.createElement('iframe');
         iframe.name = 'sync_event_' + Date.now();
         iframe.style.display = 'none';
@@ -557,7 +769,7 @@ const App: React.FC = () => {
         const input = document.createElement('input');
         input.type = 'hidden';
         input.name = 'event';
-        input.value = JSON.stringify(record);
+        input.value = JSON.stringify(eventToSync);
         form.appendChild(input);
 
         document.body.appendChild(form);
@@ -576,34 +788,139 @@ const App: React.FC = () => {
     }
   };
 
-  // Manejar foto
-  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Manejar foto - sube a Google Drive si hay conexión
+  const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setNewEventData({ ...newEventData, photo: reader.result as string });
-      };
-      reader.readAsDataURL(file);
+    if (!file) return;
+
+    // Leer como base64 primero
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64Data = reader.result as string;
+
+      if (isOnline) {
+        // Subir a Google Drive
+        setUploadingPhoto(true);
+        try {
+          const photoPayload = {
+            base64: base64Data,
+            mimeType: file.type,
+            filename: `evento_${Date.now()}_${file.name}`
+          };
+
+          // Usar fetch para subir y obtener URL
+          const formData = new FormData();
+          formData.append('uploadPhoto', JSON.stringify(photoPayload));
+
+          const response = await fetch(GAS_URL, {
+            method: 'POST',
+            body: formData
+          });
+
+          const result = await response.json();
+          if (result.success && result.url) {
+            setNewEventData({ ...newEventData, photo: result.url });
+            console.log('Foto subida a Drive:', result.url);
+          } else {
+            // Si falla, guardar base64 local
+            console.warn('Error subiendo foto, guardando local:', result.error);
+            setNewEventData({ ...newEventData, photo: base64Data });
+          }
+        } catch (error) {
+          console.error('Error subiendo foto:', error);
+          // Guardar base64 local si falla
+          setNewEventData({ ...newEventData, photo: base64Data });
+        } finally {
+          setUploadingPhoto(false);
+        }
+      } else {
+        // Sin conexión: guardar base64 local, se subirá al sincronizar
+        setNewEventData({ ...newEventData, photo: base64Data });
+        console.log('Sin conexión: foto guardada localmente');
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Descargar último inventario desde Google Sheets
+  const downloadLastInventoryFromSheet = async () => {
+    try {
+      const response = await fetch(`${GAS_URL}?action=getLastInventory`);
+      const result = await response.json();
+      if (result.success && result.inventory) {
+        console.log('Último inventario descargado desde Excel');
+        return result.inventory;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error descargando inventario:', error);
+      return null;
     }
   };
 
-  // Cargar último registro de inventario
+  // Cargar último registro de inventario (con sincronización bidireccional)
   const loadLastInventory = async () => {
-    const lastRecord = await db.inventoryRecords.orderBy('createdAt').reverse().first();
-    if (lastRecord) {
-      setLastInventoryDate(lastRecord.date);
+    // Primero cargar registro local más reciente
+    let localRecord = await db.inventoryRecords.orderBy('createdAt').reverse().first();
+
+    // Si hay conexión, intentar descargar desde Excel
+    if (navigator.onLine) {
+      try {
+        const remoteInventory = await downloadLastInventoryFromSheet();
+        if (remoteInventory) {
+          const remoteDate = new Date(remoteInventory.date).getTime();
+          const localDate = localRecord ? new Date(localRecord.date).getTime() : 0;
+
+          // Si el remoto es más reciente o no hay local, importar y guardar
+          if (remoteDate > localDate || !localRecord) {
+            // Construir el registro para guardar en IndexedDB
+            const inventoryToSave: Omit<InventoryRecord, 'id'> = {
+              date: remoteInventory.date,
+              synced: 1, // Ya viene del Excel, está sincronizado
+              createdAt: remoteInventory.createdAt || Date.now()
+            } as Omit<InventoryRecord, 'id'>;
+
+            // Agregar todos los campos de inventario
+            INVENTORY_CATEGORIES.forEach(cat => {
+              cat.items.forEach(item => {
+                const centralKey = `${item.key}_central` as keyof InventoryRecord;
+                const minaKey = `${item.key}_mina` as keyof InventoryRecord;
+                (inventoryToSave as any)[centralKey] = remoteInventory[centralKey] || 0;
+                (inventoryToSave as any)[minaKey] = remoteInventory[minaKey] || 0;
+              });
+            });
+
+            // Verificar si ya existe un registro con la misma fecha
+            const existingRecord = await db.inventoryRecords.where('date').equals(remoteInventory.date).first();
+            if (!existingRecord) {
+              await db.inventoryRecords.add(inventoryToSave);
+              console.log('Inventario guardado localmente desde Excel:', remoteInventory.date);
+            }
+
+            // Actualizar la referencia local
+            localRecord = await db.inventoryRecords.orderBy('createdAt').reverse().first();
+          }
+        }
+      } catch (error) {
+        console.warn('Error sincronizando inventario desde Excel:', error);
+      }
+    }
+
+    // Cargar datos del registro local (ya sea descargado o previo)
+    if (localRecord) {
+      setLastInventoryDate(localRecord.date);
       // Cargar los valores del último registro
       const newData: Record<string, number> = {};
       INVENTORY_CATEGORIES.forEach(cat => {
         cat.items.forEach(item => {
           const centralKey = `${item.key}_central` as keyof InventoryRecord;
           const minaKey = `${item.key}_mina` as keyof InventoryRecord;
-          newData[`${item.key}_central`] = (lastRecord[centralKey] as number) || 0;
-          newData[`${item.key}_mina`] = (lastRecord[minaKey] as number) || 0;
+          newData[`${item.key}_central`] = (localRecord![centralKey] as number) || 0;
+          newData[`${item.key}_mina`] = (localRecord![minaKey] as number) || 0;
         });
       });
       setInventoryData(newData);
+      setInventoryDate(localRecord.date); // Precargar la fecha también
     } else {
       setLastInventoryDate(null);
       setInventoryData(createEmptyInventory());
@@ -688,6 +1005,145 @@ const App: React.FC = () => {
         console.error('Error sincronizando inventario:', error);
       }
     }
+  };
+
+  // Resetear formulario de descarte
+  const resetDiscardForm = () => {
+    setDiscardData({
+      date: new Date().toISOString().split('T')[0],
+      serie: '',
+      equipo: '',
+      diametro: '',
+      fechaPostura: new Date().toISOString().split('T')[0],
+      fechaDescarte: new Date().toISOString().split('T')[0],
+      tipoAcero: 'Bit',
+      causaDescarte: '',
+      metros: 0,
+      terreno: 'Medio'
+    });
+  };
+
+  // Guardar descarte de aceros
+  const handleSaveDiscard = async () => {
+    try {
+      if (!discardData.serie || !discardData.equipo) {
+        alert('Por favor complete los campos obligatorios (Serie y Equipo)');
+        return;
+      }
+
+      const record: Omit<SteelDiscard, 'id'> = {
+        ...discardData,
+        synced: 0,
+        createdAt: Date.now()
+      };
+
+      console.log('Guardando descarte de aceros...', record);
+      await db.steelDiscards.add(record);
+
+      // Feedback visual
+      const btn = document.querySelector('.btn-save-discard');
+      if (btn) {
+        const originalText = btn.textContent;
+        btn.textContent = '¡GUARDADO!';
+        setTimeout(() => btn.textContent = originalText, 2000);
+      }
+
+      if (isOnline) {
+        await syncSteelDiscards();
+      }
+
+      resetDiscardForm();
+      setCurrentPage('tecnico');
+      alert('Registro de descarte guardado correctamente');
+    } catch (error) {
+      console.error('Error guardando descarte:', error);
+      alert('Error al guardar el registro.');
+    }
+  };
+
+  // Sincronizar descartes de aceros
+  const syncSteelDiscards = async () => {
+    const unsynced = await db.steelDiscards.where('synced').equals(0).toArray();
+    if (unsynced.length === 0) return;
+
+    for (const record of unsynced) {
+      try {
+        const iframe = document.createElement('iframe');
+        iframe.name = 'sync_discard_' + Date.now();
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = GAS_URL;
+        form.target = iframe.name;
+
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'steelDiscard';
+        input.value = JSON.stringify(record);
+        form.appendChild(input);
+
+        document.body.appendChild(form);
+        form.submit();
+
+        setTimeout(() => {
+          document.body.removeChild(form);
+          document.body.removeChild(iframe);
+        }, 5000);
+
+        await db.steelDiscards.update(record.id!, { synced: 1 });
+        console.log('Descarte sincronizado:', record.id);
+      } catch (error) {
+        console.error('Error sincronizando descarte:', error);
+      }
+    }
+  };
+
+  // Manejar foto de descarte
+  const handleDiscardPhotoChange = (fieldName: string) => async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64Data = reader.result as string;
+
+      if (isOnline) {
+        setUploadingDiscardPhoto(true);
+        try {
+          const photoPayload = {
+            base64: base64Data,
+            mimeType: file.type,
+            filename: `descarte_${fieldName}_${Date.now()}_${file.name}`
+          };
+
+          const formData = new FormData();
+          formData.append('uploadPhoto', JSON.stringify(photoPayload));
+
+          const response = await fetch(GAS_URL, {
+            method: 'POST',
+            body: formData
+          });
+
+          const result = await response.json();
+          if (result.success && result.url) {
+            setDiscardData(prev => ({ ...prev, [fieldName]: result.url }));
+            console.log('Foto subida a Drive:', result.url);
+          } else {
+            setDiscardData(prev => ({ ...prev, [fieldName]: base64Data }));
+          }
+        } catch (error) {
+          console.error('Error subiendo foto:', error);
+          setDiscardData(prev => ({ ...prev, [fieldName]: base64Data }));
+        } finally {
+          setUploadingDiscardPhoto(false);
+        }
+      } else {
+        setDiscardData(prev => ({ ...prev, [fieldName]: base64Data }));
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   return (
@@ -1367,9 +1823,24 @@ const App: React.FC = () => {
               <section key={event.id} className="card" style={{ borderLeft: '4px solid var(--primary)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                   <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text)' }}>{event.title}</h3>
-                  <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
-                    {new Date(event.date).toLocaleDateString('es-CL')}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
+                      {new Date(event.date).toLocaleDateString('es-CL')}
+                    </span>
+                    <button
+                      onClick={() => confirmDeleteEvent(event)}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'var(--danger)',
+                        padding: '4px'
+                      }}
+                      title="Eliminar evento"
+                    >
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
                 </div>
                 <p style={{ color: 'var(--text-light)', fontSize: '0.9rem', margin: '0.5rem 0' }}>
                   {event.description || 'Sin descripción'}
@@ -1399,6 +1870,70 @@ const App: React.FC = () => {
           >
             ← VOLVER
           </button>
+
+          {/* Modal de confirmación de eliminación */}
+          {eventToDelete && (
+            <div style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000,
+              padding: '1rem'
+            }}>
+              <div style={{
+                background: 'white',
+                borderRadius: '12px',
+                padding: '1.5rem',
+                maxWidth: '400px',
+                width: '100%',
+                boxShadow: '0 10px 40px rgba(0, 0, 0, 0.2)'
+              }}>
+                <h3 style={{ margin: '0 0 1rem', color: 'var(--danger)' }}>
+                  🗑️ Eliminar Evento
+                </h3>
+                <p style={{ margin: '0 0 1.5rem', color: 'var(--text-light)' }}>
+                  ¿Estás seguro de eliminar el evento <strong>"{eventToDelete.title}"</strong>? Esta acción no se puede deshacer.
+                </p>
+                <div style={{ display: 'flex', gap: '1rem' }}>
+                  <button
+                    onClick={cancelDeleteEvent}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: '1px solid var(--border)',
+                      background: 'white',
+                      cursor: 'pointer',
+                      fontWeight: 600
+                    }}
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    onClick={handleDeleteEvent}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      background: 'var(--danger)',
+                      color: 'white',
+                      cursor: 'pointer',
+                      fontWeight: 600
+                    }}
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </main>
       )}
 
@@ -1484,16 +2019,29 @@ const App: React.FC = () => {
                   Captura o selecciona una imagen
                 </p>
               )}
-              <label className="btn-save" style={{ display: 'inline-flex', cursor: 'pointer' }}>
-                📷 TOMAR FOTO / SELECCIONAR
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={handlePhotoChange}
-                  style={{ display: 'none' }}
-                />
-              </label>
+              {uploadingPhoto ? (
+                <div style={{
+                  padding: '12px 24px',
+                  background: 'var(--primary)',
+                  color: 'white',
+                  borderRadius: '8px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  ⏳ SUBIENDO FOTO...
+                </div>
+              ) : (
+                <label className="btn-save" style={{ display: 'inline-flex', cursor: 'pointer' }}>
+                  📷 TOMAR FOTO / GALERÍA
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handlePhotoChange}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              )}
             </div>
           </section>
 
@@ -1604,8 +2152,11 @@ const App: React.FC = () => {
               </p>
             </section>
 
-            {/* Configuración */}
-            <section className="card" style={{ cursor: 'pointer', textAlign: 'center', gridColumn: 'span 2', opacity: 0.6 }}>
+            {/* Descarte de Aceros */}
+            <section
+              className="card"
+              onClick={() => setCurrentPage('descarteAceros')}
+              style={{ cursor: 'pointer', textAlign: 'center', gridColumn: 'span 2' }}>
               <div style={{
                 background: 'rgba(255, 193, 7, 0.1)',
                 borderRadius: '12px',
@@ -1613,11 +2164,11 @@ const App: React.FC = () => {
                 display: 'inline-block',
                 marginBottom: '0.5rem'
               }}>
-                <HardHat size={32} style={{ color: '#ffc107' }} />
+                <Trash2 size={32} style={{ color: '#ffc107' }} />
               </div>
-              <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem' }}>Configuración</h3>
+              <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem' }}>Descarte de Aceros</h3>
               <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
-                Próximamente
+                Registro de componentes fuera de servicio
               </p>
             </section>
           </div>
@@ -1690,40 +2241,108 @@ const App: React.FC = () => {
                       <td style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem' }}>{item.name}</td>
                       <td style={{ padding: '0.3rem', textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-light)' }}>{item.sap}</td>
                       <td style={{ padding: '0.2rem' }}>
-                        <input
-                          type="number"
-                          min="0"
-                          value={inventoryData[`${item.key}_central`] || 0}
-                          onChange={(e) => setInventoryData({
-                            ...inventoryData,
-                            [`${item.key}_central`]: parseInt(e.target.value) || 0
-                          })}
-                          style={{
-                            width: '100%',
-                            padding: '0.25rem',
-                            textAlign: 'center',
-                            border: '1px solid var(--border)',
-                            borderRadius: '4px'
-                          }}
-                        />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                          <button
+                            onClick={() => setInventoryData({
+                              ...inventoryData,
+                              [`${item.key}_central`]: Math.max(0, (inventoryData[`${item.key}_central`] || 0) - 1)
+                            })}
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              border: '1px solid var(--border)',
+                              borderRadius: '4px',
+                              background: '#f8f9fa',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              fontSize: '1rem'
+                            }}
+                          >−</button>
+                          <input
+                            type="number"
+                            min="0"
+                            value={inventoryData[`${item.key}_central`] || 0}
+                            onChange={(e) => setInventoryData({
+                              ...inventoryData,
+                              [`${item.key}_central`]: parseInt(e.target.value) || 0
+                            })}
+                            style={{
+                              width: '45px',
+                              padding: '0.25rem',
+                              textAlign: 'center',
+                              border: '1px solid var(--border)',
+                              borderRadius: '4px'
+                            }}
+                          />
+                          <button
+                            onClick={() => setInventoryData({
+                              ...inventoryData,
+                              [`${item.key}_central`]: (inventoryData[`${item.key}_central`] || 0) + 1
+                            })}
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              border: '1px solid var(--border)',
+                              borderRadius: '4px',
+                              background: '#f8f9fa',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              fontSize: '1rem'
+                            }}
+                          >+</button>
+                        </div>
                       </td>
                       <td style={{ padding: '0.2rem' }}>
-                        <input
-                          type="number"
-                          min="0"
-                          value={inventoryData[`${item.key}_mina`] || 0}
-                          onChange={(e) => setInventoryData({
-                            ...inventoryData,
-                            [`${item.key}_mina`]: parseInt(e.target.value) || 0
-                          })}
-                          style={{
-                            width: '100%',
-                            padding: '0.25rem',
-                            textAlign: 'center',
-                            border: '1px solid var(--border)',
-                            borderRadius: '4px'
-                          }}
-                        />
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                          <button
+                            onClick={() => setInventoryData({
+                              ...inventoryData,
+                              [`${item.key}_mina`]: Math.max(0, (inventoryData[`${item.key}_mina`] || 0) - 1)
+                            })}
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              border: '1px solid var(--border)',
+                              borderRadius: '4px',
+                              background: '#f8f9fa',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              fontSize: '1rem'
+                            }}
+                          >−</button>
+                          <input
+                            type="number"
+                            min="0"
+                            value={inventoryData[`${item.key}_mina`] || 0}
+                            onChange={(e) => setInventoryData({
+                              ...inventoryData,
+                              [`${item.key}_mina`]: parseInt(e.target.value) || 0
+                            })}
+                            style={{
+                              width: '45px',
+                              padding: '0.25rem',
+                              textAlign: 'center',
+                              border: '1px solid var(--border)',
+                              borderRadius: '4px'
+                            }}
+                          />
+                          <button
+                            onClick={() => setInventoryData({
+                              ...inventoryData,
+                              [`${item.key}_mina`]: (inventoryData[`${item.key}_mina`] || 0) + 1
+                            })}
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              border: '1px solid var(--border)',
+                              borderRadius: '4px',
+                              background: '#f8f9fa',
+                              cursor: 'pointer',
+                              fontWeight: 'bold',
+                              fontSize: '1rem'
+                            }}
+                          >+</button>
+                        </div>
                       </td>
                     </tr>
                   ))
@@ -1747,6 +2366,234 @@ const App: React.FC = () => {
             >
               <Save size={24} />
               ACTUALIZAR STOCK
+            </button>
+          </div>
+        </main>
+      )}
+
+      {/* Página Descarte de Aceros */}
+      {currentPage === 'descarteAceros' && (
+        <main className="container">
+          <section className="card">
+            <div className="card-title">
+              <Trash2 size={20} />
+              <span>DESCARTE DE ACEROS</span>
+            </div>
+
+            <div className="form-grid">
+              <div className="form-group">
+                <label>Fecha</label>
+                <input
+                  type="date"
+                  value={discardData.date}
+                  onChange={(e) => setDiscardData({ ...discardData, date: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Serie</label>
+                <input
+                  type="text"
+                  placeholder="Ej: S12345"
+                  value={discardData.serie}
+                  onChange={(e) => setDiscardData({ ...discardData, serie: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Equipo</label>
+                <input
+                  type="text"
+                  placeholder="Ej: PV-05"
+                  value={discardData.equipo}
+                  onChange={(e) => setDiscardData({ ...discardData, equipo: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Diámetro</label>
+                <input
+                  type="text"
+                  placeholder="Ej: 10 5/8"
+                  value={discardData.diametro}
+                  onChange={(e) => setDiscardData({ ...discardData, diametro: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Fecha de Postura</label>
+                <input
+                  type="date"
+                  value={discardData.fechaPostura}
+                  onChange={(e) => setDiscardData({ ...discardData, fechaPostura: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Fecha de Descarte</label>
+                <input
+                  type="date"
+                  value={discardData.fechaDescarte}
+                  onChange={(e) => setDiscardData({ ...discardData, fechaDescarte: e.target.value })}
+                />
+              </div>
+              <div className="form-group">
+                <label>Tipo Acero</label>
+                <select
+                  value={discardData.tipoAcero}
+                  onChange={(e) => setDiscardData({ ...discardData, tipoAcero: e.target.value as any })}
+                >
+                  <option value="Bit">Bit</option>
+                  <option value="Martillo">Martillo</option>
+                  <option value="Tricono">Tricono</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Terreno</label>
+                <select
+                  value={discardData.terreno}
+                  onChange={(e) => setDiscardData({ ...discardData, terreno: e.target.value as any })}
+                >
+                  <option value="Blando">Blando</option>
+                  <option value="Medio">Medio</option>
+                  <option value="Duro">Duro</option>
+                </select>
+              </div>
+              <div className="form-group">
+                <label>Metros</label>
+                <input
+                  type="number"
+                  value={discardData.metros}
+                  onChange={(e) => setDiscardData({ ...discardData, metros: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+
+              <div className="form-group full-width">
+                <label>Causa de Descarte</label>
+                <textarea
+                  placeholder="Escriba la razón del descarte..."
+                  value={discardData.causaDescarte}
+                  onChange={(e) => setDiscardData({ ...discardData, causaDescarte: e.target.value })}
+                  style={{ width: '100%', minHeight: '100px', padding: '0.75rem', borderRadius: '8px', border: '1px solid var(--border)' }}
+                />
+              </div>
+
+              {/* Campos específicos según el tipo */}
+              {discardData.tipoAcero === 'Bit' && (
+                <>
+                  <div className="form-group">
+                    <label>Medida entre Insertos</label>
+                    <input
+                      type="text"
+                      value={discardData.medidaEntreInsertos || ''}
+                      onChange={(e) => setDiscardData({ ...discardData, medidaEntreInsertos: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Medida de matriz</label>
+                    <input
+                      type="text"
+                      value={discardData.medidaMatriz || ''}
+                      onChange={(e) => setDiscardData({ ...discardData, medidaMatriz: e.target.value })}
+                    />
+                  </div>
+                </>
+              )}
+
+              {discardData.tipoAcero === 'Martillo' && (
+                <>
+                  <div className="form-group">
+                    <label>Diámetro lado Culata</label>
+                    <input
+                      type="text"
+                      value={discardData.diametroCulata || ''}
+                      onChange={(e) => setDiscardData({ ...discardData, diametroCulata: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label>Diámetro lado portabit</label>
+                    <input
+                      type="text"
+                      value={discardData.diametroPortabit || ''}
+                      onChange={(e) => setDiscardData({ ...discardData, diametroPortabit: e.target.value })}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+
+          {/* Sección de Fotos */}
+          <section className="card">
+            <h3 style={{ marginBottom: '1rem', fontSize: '1rem', color: 'var(--secondary)' }}>📸 REGISTRO FOTOGRÁFICO</h3>
+            <div className="form-grid">
+              {/* Fotos Comunes/Bit/Martillo */}
+              {(discardData.tipoAcero === 'Bit' || discardData.tipoAcero === 'Martillo') && (
+                <>
+                  <div className="form-group">
+                    <label>Foto Serie</label>
+                    <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoSerie')} />
+                    {discardData.fotoSerie && <p style={{ fontSize: '0.7rem', color: 'var(--success)' }}>✓ Foto cargada</p>}
+                  </div>
+                  <div className="form-group">
+                    <label>Foto Cuerpo</label>
+                    <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoCuerpo')} />
+                    {discardData.fotoCuerpo && <p style={{ fontSize: '0.7rem', color: 'var(--success)' }}>✓ Foto cargada</p>}
+                  </div>
+                </>
+              )}
+              {discardData.tipoAcero === 'Bit' && (
+                <div className="form-group">
+                  <label>Foto Botones</label>
+                  <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoBotones')} />
+                  {discardData.fotoBotones && <p style={{ fontSize: '0.7rem', color: 'var(--success)' }}>✓ Foto cargada</p>}
+                </div>
+              )}
+
+              {/* Fotos específicas para Tricono */}
+              {discardData.tipoAcero === 'Tricono' && (
+                <>
+                  {[
+                    { key: 'fotoSerie', obsKey: 'obsSerie', label: 'Serie' },
+                    { key: 'fotoCuerpoFaldon1', obsKey: 'obsCuerpoFaldon1', label: 'Cuerpo/Faldon 1' },
+                    { key: 'fotoCuerpoFaldon2', obsKey: 'obsCuerpoFaldon2', label: 'Cuerpo/Faldon 2' },
+                    { key: 'fotoCuerpoFaldon3', obsKey: 'obsCuerpoFaldon3', label: 'Cuerpo/Faldon 3' },
+                    { key: 'fotoCono1', obsKey: 'obsCono1', label: 'Cono 1' },
+                    { key: 'fotoCono2', obsKey: 'obsCono2', label: 'Cono 2' },
+                    { key: 'fotoCono3', obsKey: 'obsCono3', label: 'Cono 3' },
+                    { key: 'fotoNozzles', obsKey: 'obsNozzles', label: 'Nozzles' },
+                    { key: 'fotoConos', obsKey: 'obsConos', label: 'Conos' },
+                  ].map((item) => (
+                    <div key={item.key} className="form-group" style={{ border: '1px solid var(--border)', padding: '0.5rem', borderRadius: '8px' }}>
+                      <label>{item.label}</label>
+                      <input type="file" accept="image/*" onChange={handleDiscardPhotoChange(item.key)} />
+                      {discardData[item.key as keyof typeof discardData] && <p style={{ fontSize: '0.7rem', color: 'var(--success)' }}>✓ Foto cargada</p>}
+                      <input
+                        type="text"
+                        placeholder="Observaciones"
+                        style={{ marginTop: '0.5rem', fontSize: '0.8rem', padding: '0.2rem' }}
+                        value={(discardData as any)[item.obsKey] || ''}
+                        onChange={(e) => setDiscardData({ ...discardData, [item.obsKey]: e.target.value })}
+                      />
+                    </div>
+                  ))}
+                </>
+              )}
+            </div>
+            {uploadingDiscardPhoto && <p style={{ textAlign: 'center', marginTop: '1rem', color: 'var(--text-muted)' }}>Subiendo fotografía...</p>}
+          </section>
+
+          <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem' }}>
+            <button
+              className="btn-add"
+              onClick={() => { resetDiscardForm(); setCurrentPage('tecnico'); }}
+              style={{ flex: 1 }}
+            >
+              CANCELAR
+            </button>
+            <button
+              className="btn-save btn-save-discard"
+              onClick={handleSaveDiscard}
+              style={{ flex: 2 }}
+              disabled={uploadingDiscardPhoto}
+            >
+              <Save size={24} />
+              {uploadingDiscardPhoto ? 'SUBIENDO...' : 'GUARDAR REGISTRO'}
             </button>
           </div>
         </main>
