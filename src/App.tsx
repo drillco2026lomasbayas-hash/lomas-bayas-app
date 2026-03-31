@@ -9,68 +9,102 @@ import {
   HardHat,
   Wifi,
   WifiOff,
-  Trash2
+  Trash2,
+  Home
 } from 'lucide-react';
 import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard } from './db';
 import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
 import './index.css';
+
+const lastSavedDrafts: Record<string, string> = {};
 
 const App: React.FC = () => {
   // CONFIGURACIÓN: Pega aquí la URL de tu implementación de Google Apps Script
   const GAS_URL = 'https://script.google.com/macros/s/AKfycbyJ4sVXk3Y5geSSvvuRkIQe-AOlyrsFEvxQnwOr2zbAFI7US65O1LKvs1ZlGk9Fpgvy/exec';
 
   const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [wells, setWells] = useState<WellRecord[]>([]);
+  const [wells, setWells] = useState<WellRecord[]>(() => {
+    const saved = localStorage.getItem('draft_wells');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [pendingCount, setPendingCount] = useState(0);
   const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros'>('reporte');
 
+  // Estado para Reporte General
+  const [reportData, setReportData] = useState(() => {
+    const saved = localStorage.getItem('draft_reportData');
+    if (saved) return JSON.parse(saved);
+    return {
+      date: new Date().toISOString().split('T')[0],
+      shift: 'TURNO A',
+      drillNumber: '',
+      operator: '',
+      bench: '',
+      phase: '',
+      mesh: '',
+      triconeBrand: '',
+      triconeModel: '',
+      triconeSerial: '',
+      triconeDiameter: '10 5/8"'
+    };
+  });
+
   // Estado para Cambio de Aceros
-  const [steelChangeData, setSteelChangeData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    drillNumber: '101',
-    shift: 'TURNO A',
-    component: 'Amortiguador',
-    serialNumber: '',
-    comments: ''
+  const [steelChangeData, setSteelChangeData] = useState(() => {
+    const saved = localStorage.getItem('draft_steelChangeData');
+    if (saved) return JSON.parse(saved);
+    return {
+      date: new Date().toISOString().split('T')[0],
+      drillNumber: '',
+      shift: 'TURNO A',
+      component: 'Amortiguador',
+      serialNumber: '',
+      comments: ''
+    };
   });
 
   // Estado para Medición de Aceros
-  const [steelMeasurementData, setSteelMeasurementData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    shift: 'A',
-    drillNumber: '5',
-    // Adaptador Inferior (primero)
-    adaptadorInferiorMedio: 0,
-    // Barra Patera (segundo)
-    barraPateraSuperior: 0,
-    barraPateraMedio: 0,
-    barraPateraInferior: 0,
-    // Barras Seguidoras (hasta 5)
-    barraSeguidora1Superior: 0,
-    barraSeguidora1Medio: 0,
-    barraSeguidora1Inferior: 0,
-    barraSeguidora2Superior: 0,
-    barraSeguidora2Medio: 0,
-    barraSeguidora2Inferior: 0,
-    barraSeguidora3Superior: 0,
-    barraSeguidora3Medio: 0,
-    barraSeguidora3Inferior: 0,
-    barraSeguidora4Superior: 0,
-    barraSeguidora4Medio: 0,
-    barraSeguidora4Inferior: 0,
-    barraSeguidora5Superior: 0,
-    barraSeguidora5Medio: 0,
-    barraSeguidora5Inferior: 0
+  const [steelMeasurementData, setSteelMeasurementData] = useState(() => {
+    const saved = localStorage.getItem('draft_steelMeasurementData');
+    if (saved) return JSON.parse(saved);
+    return {
+      date: new Date().toISOString().split('T')[0],
+      shift: 'A',
+      drillNumber: '',
+      adaptadorInferiorMedio: 0,
+      barraPateraSuperior: 0,
+      barraPateraMedio: 0,
+      barraPateraInferior: 0,
+      barraSeguidora1Superior: 0,
+      barraSeguidora1Medio: 0,
+      barraSeguidora1Inferior: 0,
+      barraSeguidora2Superior: 0,
+      barraSeguidora2Medio: 0,
+      barraSeguidora2Inferior: 0,
+      barraSeguidora3Superior: 0,
+      barraSeguidora3Medio: 0,
+      barraSeguidora3Inferior: 0,
+      barraSeguidora4Superior: 0,
+      barraSeguidora4Medio: 0,
+      barraSeguidora4Inferior: 0,
+      barraSeguidora5Superior: 0,
+      barraSeguidora5Medio: 0,
+      barraSeguidora5Inferior: 0
+    };
   });
 
   // Estado para Eventos
   const [openEvents, setOpenEvents] = useState<Event[]>([]);
-  const [newEventData, setNewEventData] = useState({
-    date: new Date().toISOString().split('T')[0],
-    title: '',
-    description: '',
-    responsible: '',
-    photo: ''
+  const [newEventData, setNewEventData] = useState(() => {
+    const saved = localStorage.getItem('draft_newEventData');
+    if (saved) return JSON.parse(saved);
+    return {
+      date: new Date().toISOString().split('T')[0],
+      title: '',
+      description: '',
+      responsible: '',
+      photo: ''
+    };
   });
 
   // Estado para Inventario
@@ -83,19 +117,30 @@ const App: React.FC = () => {
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
 
   // Estado para Descarte de Aceros
-  const [discardData, setDiscardData] = useState<Omit<SteelDiscard, 'id' | 'synced' | 'createdAt'>>({
-    date: new Date().toISOString().split('T')[0],
-    serie: '',
-    equipo: '',
-    diametro: '',
-    fechaPostura: new Date().toISOString().split('T')[0],
-    fechaDescarte: new Date().toISOString().split('T')[0],
-    tipoAcero: 'Bit',
-    causaDescarte: '',
-    metros: 0,
-    terreno: 'Medio'
+  const [discardData, setDiscardData] = useState<Omit<SteelDiscard, 'id' | 'synced' | 'createdAt'>>(() => {
+    const saved = localStorage.getItem('draft_discardData');
+    if (saved) return JSON.parse(saved);
+    return {
+      date: new Date().toISOString().split('T')[0],
+      serie: '',
+      equipo: '',
+      diametro: '',
+      fechaPostura: new Date().toISOString().split('T')[0],
+      fechaDescarte: new Date().toISOString().split('T')[0],
+      tipoAcero: 'Bit',
+      causaDescarte: '',
+      metros: 0,
+      terreno: 'Medio'
+    };
   });
   const [uploadingDiscardPhoto, setUploadingDiscardPhoto] = useState(false);
+
+  useEffect(() => { localStorage.setItem('draft_reportData', JSON.stringify(reportData)); }, [reportData]);
+  useEffect(() => { localStorage.setItem('draft_wells', JSON.stringify(wells)); }, [wells]);
+  useEffect(() => { localStorage.setItem('draft_steelChangeData', JSON.stringify(steelChangeData)); }, [steelChangeData]);
+  useEffect(() => { localStorage.setItem('draft_steelMeasurementData', JSON.stringify(steelMeasurementData)); }, [steelMeasurementData]);
+  useEffect(() => { localStorage.setItem('draft_newEventData', JSON.stringify(newEventData)); }, [newEventData]);
+  useEffect(() => { localStorage.setItem('draft_discardData', JSON.stringify(discardData)); }, [discardData]);
 
   const getCurrentTime = () => {
     const now = new Date();
@@ -215,51 +260,71 @@ const App: React.FC = () => {
 
   const handleSave = async () => {
     try {
-      const reportData = {
-        date: (document.querySelector('input[type="date"]') as HTMLInputElement)?.value || new Date().toISOString().split('T')[0],
-        shift: (document.querySelector('select:nth-of-type(1)') as HTMLSelectElement)?.value || 'TURNO A',
-        drillNumber: (document.querySelector('select:nth-of-type(2)') as HTMLSelectElement)?.value || '101',
-        operator: (document.querySelector('input[placeholder="Nombre"]') as HTMLInputElement)?.value || '',
-        bench: (document.querySelector('input[placeholder="2210"]') as HTMLInputElement)?.value || '',
-        phase: (document.querySelector('input[placeholder="8"]') as HTMLInputElement)?.value || '',
-        mesh: (document.querySelector('input[placeholder="12"]') as HTMLInputElement)?.value || '',
-        triconeBrand: (document.querySelector('input[placeholder="Shareate1"]') as HTMLInputElement)?.value || '',
-        triconeModel: (document.querySelector('input[placeholder="615r"]') as HTMLInputElement)?.value || '',
-        triconeSerial: (document.querySelector('input[placeholder="78452211"]') as HTMLInputElement)?.value || '',
-        triconeDiameter: (document.querySelector('select:nth-last-of-type(2)') as HTMLSelectElement)?.value || '10 5/8"',
+      const recordToSave = {
+        ...reportData,
         wells,
         synced: 0,
         createdAt: Date.now()
       };
 
-      console.log('Guardando reporte localmente...', reportData);
-      const id = await db.reports.add(reportData);
-      console.log('Reporte guardado con ID:', id);
-
-      // Feedback visual no bloqueante (podríamos añadir un toast aquí)
+      const reportStr = JSON.stringify(recordToSave);
+      if (lastSavedDrafts['draft_wells'] === reportStr) {
+        alert('Esta información ya ha sido guardada en este dispositivo.');
+        return;
+      }
+      
+      let syncSuccess = false;
       const btn = document.querySelector('.btn-save');
-      if (btn) {
-        const originalText = btn.textContent;
-        btn.textContent = '¡GUARDADO!';
-        setTimeout(() => btn.textContent = originalText, 2000);
+      const originalText = btn?.textContent || 'GUARDAR REGISTRO';
+      
+      if (isOnline) {
+        try {
+          if (btn) btn.textContent = 'Sincronizando...';
+          const fd = new FormData();
+          fd.append('payload', reportStr);
+          const res = await fetch(GAS_URL, { method: 'POST', body: fd });
+          const json = await res.json();
+          if (json.success) syncSuccess = true;
+        } catch(e) { console.error('Error enviando a la nube:', e); }
       }
 
-      // Actualizar conteo de pendientes
+      recordToSave.synced = syncSuccess ? 1 : 0;
+      await db.reports.add(recordToSave);
       const newCount = await db.reports.where('synced').equals(0).count();
       setPendingCount(newCount);
 
-      if (isOnline) {
-        await syncData();
-        // Actualizar conteo después de sincronizar
-        const countAfterSync = await db.reports.where('synced').equals(0).count();
-        setPendingCount(countAfterSync);
+      if (syncSuccess) {
+        setWells([]);
+        localStorage.removeItem('draft_wells');
+        lastSavedDrafts['draft_wells'] = '';
+        
+        setReportData({
+          date: new Date().toISOString().split('T')[0],
+          shift: 'TURNO A',
+          drillNumber: '',
+          operator: '',
+          bench: '',
+          phase: '',
+          mesh: '',
+          triconeBrand: '',
+          triconeModel: '',
+          triconeSerial: '',
+          triconeDiameter: '10 5/8"'
+        });
+        localStorage.removeItem('draft_reportData');
+        
+        if (btn) {
+          btn.textContent = '¡GUARDADO EN LA NUBE!';
+          setTimeout(() => btn.textContent = originalText, 2500);
+        }
+      } else {
+        lastSavedDrafts['draft_wells'] = reportStr;
+        if (btn) btn.textContent = originalText;
+        alert(isOnline ? 'Error al guardar en la nube. Guardado localmente.' : 'Sin internet. Progreso guardado de forma local.');
       }
-
-      // Limpiar formulario para nuevo registro
-      setWells([]);
     } catch (error) {
       console.error('Error saving report:', error);
-      alert('Error al guardar el registro local.');
+      alert('Error al intentar guardar.');
     }
   };
 
@@ -325,82 +390,61 @@ const App: React.FC = () => {
         createdAt: Date.now()
       };
 
-      console.log('Guardando cambio de aceros...', record);
-      await db.steelChanges.add(record);
-
-      // Feedback visual
-      const btn = document.querySelector('.btn-save-steel');
-      if (btn) {
-        const originalText = btn.textContent;
-        btn.textContent = '¡GUARDADO!';
-        setTimeout(() => btn.textContent = originalText, 2000);
+      const recordStr = JSON.stringify(record);
+      if (lastSavedDrafts['draft_steelChangeData'] === recordStr) {
+        alert('Esta información ya ha sido guardada en este dispositivo.');
+        return;
       }
 
-      // Actualizar conteo
+      let syncSuccess = false;
+      const btn = document.querySelector('.btn-save-steel');
+      const originalText = btn?.textContent || 'GUARDAR REGISTRO';
+
+      if (isOnline) {
+        try {
+          if (btn) btn.textContent = 'Sincronizando...';
+          const fd = new FormData();
+          fd.append('steelChange', recordStr);
+          const res = await fetch(GAS_URL, { method: 'POST', body: fd });
+          const json = await res.json();
+          if (json.success) syncSuccess = true;
+        } catch (e) { console.error('Error enviando a nube:', e); }
+      }
+
+      record.synced = syncSuccess ? 1 : 0;
+      await db.steelChanges.add(record);
+
       const newCount = await db.reports.where('synced').equals(0).count() +
         await db.steelChanges.where('synced').equals(0).count();
       setPendingCount(newCount);
 
-      if (isOnline) {
-        await syncSteelChanges();
-        const countAfterSync = await db.reports.where('synced').equals(0).count() +
-          await db.steelChanges.where('synced').equals(0).count();
-        setPendingCount(countAfterSync);
+      if (syncSuccess) {
+        setSteelChangeData({
+          date: new Date().toISOString().split('T')[0],
+          drillNumber: '',
+          shift: 'TURNO A',
+          component: 'Amortiguador',
+          serialNumber: '',
+          comments: ''
+        });
+        localStorage.removeItem('draft_steelChangeData');
+        lastSavedDrafts['draft_steelChangeData'] = '';
+        if (btn) {
+          btn.textContent = '¡GUARDADO EN LA NUBE!';
+          setTimeout(() => btn.textContent = originalText, 2500);
+        }
+      } else {
+        lastSavedDrafts['draft_steelChangeData'] = recordStr;
+        if (btn) btn.textContent = originalText;
+        alert(isOnline ? 'Error contactando nube. Guardado local.' : 'Sin internet. Guardado localmente.');
       }
-
-      // Limpiar formulario
-      setSteelChangeData({
-        date: new Date().toISOString().split('T')[0],
-        drillNumber: '101',
-        shift: 'TURNO A',
-        component: 'Amortiguador',
-        serialNumber: '',
-        comments: ''
-      });
     } catch (error) {
       console.error('Error guardando cambio de aceros:', error);
       alert('Error al guardar el registro.');
     }
   };
 
-  // Sincronizar Cambios de Aceros
-  const syncSteelChanges = async () => {
-    const unsynced = await db.steelChanges.where('synced').equals(0).toArray();
-    if (unsynced.length === 0) return;
 
-    for (const record of unsynced) {
-      try {
-        const iframe = document.createElement('iframe');
-        iframe.name = 'sync_steel_' + Date.now();
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = GAS_URL;
-        form.target = iframe.name;
-
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'steelChange';
-        input.value = JSON.stringify(record);
-        form.appendChild(input);
-
-        document.body.appendChild(form);
-        form.submit();
-
-        setTimeout(() => {
-          document.body.removeChild(form);
-          document.body.removeChild(iframe);
-        }, 5000);
-
-        await db.steelChanges.update(record.id!, { synced: 1 });
-        console.log('Cambio de aceros sincronizado:', record.id);
-      } catch (error) {
-        console.error('Error sincronizando cambio de aceros:', error);
-      }
-    }
-  };
 
   // Guardar Medición de Aceros
   const handleSaveSteelMeasurement = async () => {
@@ -411,100 +455,78 @@ const App: React.FC = () => {
         createdAt: Date.now()
       };
 
-      console.log('Guardando medición de aceros...', record);
-      await db.steelMeasurements.add(record);
-
-      // Feedback visual
-      const btn = document.querySelector('.btn-save-measurement');
-      if (btn) {
-        const originalText = btn.textContent;
-        btn.textContent = '¡GUARDADO!';
-        setTimeout(() => btn.textContent = originalText, 2000);
+      const recordStr = JSON.stringify(record);
+      if (lastSavedDrafts['draft_steelMeasurementData'] === recordStr) {
+        alert('Esta información ya ha sido guardada en este dispositivo.');
+        return;
       }
 
-      // Actualizar conteo
+      let syncSuccess = false;
+      const btn = document.querySelector('.btn-save-measurement');
+      const originalText = btn?.textContent || 'GUARDAR REGISTRO';
+
+      if (isOnline) {
+        try {
+          if (btn) btn.textContent = 'Sincronizando...';
+          const fd = new FormData();
+          fd.append('steelMeasurement', recordStr);
+          const res = await fetch(GAS_URL, { method: 'POST', body: fd });
+          const json = await res.json();
+          if (json.success) syncSuccess = true;
+        } catch (e) { console.error('Error enviando a nube:', e); }
+      }
+
+      record.synced = syncSuccess ? 1 : 0;
+      await db.steelMeasurements.add(record);
+
       const newCount = await db.reports.where('synced').equals(0).count() +
         await db.steelChanges.where('synced').equals(0).count() +
         await db.steelMeasurements.where('synced').equals(0).count();
       setPendingCount(newCount);
 
-      if (isOnline) {
-        await syncSteelMeasurements();
-        const countAfterSync = await db.reports.where('synced').equals(0).count() +
-          await db.steelChanges.where('synced').equals(0).count() +
-          await db.steelMeasurements.where('synced').equals(0).count();
-        setPendingCount(countAfterSync);
+      if (syncSuccess) {
+        setSteelMeasurementData({
+          date: new Date().toISOString().split('T')[0],
+          shift: 'A',
+          drillNumber: '',
+          adaptadorInferiorMedio: 0,
+          barraPateraSuperior: 0,
+          barraPateraMedio: 0,
+          barraPateraInferior: 0,
+          barraSeguidora1Superior: 0,
+          barraSeguidora1Medio: 0,
+          barraSeguidora1Inferior: 0,
+          barraSeguidora2Superior: 0,
+          barraSeguidora2Medio: 0,
+          barraSeguidora2Inferior: 0,
+          barraSeguidora3Superior: 0,
+          barraSeguidora3Medio: 0,
+          barraSeguidora3Inferior: 0,
+          barraSeguidora4Superior: 0,
+          barraSeguidora4Medio: 0,
+          barraSeguidora4Inferior: 0,
+          barraSeguidora5Superior: 0,
+          barraSeguidora5Medio: 0,
+          barraSeguidora5Inferior: 0
+        });
+        localStorage.removeItem('draft_steelMeasurementData');
+        lastSavedDrafts['draft_steelMeasurementData'] = '';
+        if (btn) {
+          btn.textContent = '¡GUARDADO EN LA NUBE!';
+          setTimeout(() => btn.textContent = originalText, 2500);
+        }
+      } else {
+        lastSavedDrafts['draft_steelMeasurementData'] = recordStr;
+        if (btn) btn.textContent = originalText;
+        alert(isOnline ? 'Error contactando nube. Guardado local.' : 'Sin internet. Guardado localmente.');
       }
-
-      // Limpiar formulario
-      setSteelMeasurementData({
-        date: new Date().toISOString().split('T')[0],
-        shift: 'A',
-        drillNumber: '5',
-        adaptadorInferiorMedio: 0,
-        barraPateraSuperior: 0,
-        barraPateraMedio: 0,
-        barraPateraInferior: 0,
-        barraSeguidora1Superior: 0,
-        barraSeguidora1Medio: 0,
-        barraSeguidora1Inferior: 0,
-        barraSeguidora2Superior: 0,
-        barraSeguidora2Medio: 0,
-        barraSeguidora2Inferior: 0,
-        barraSeguidora3Superior: 0,
-        barraSeguidora3Medio: 0,
-        barraSeguidora3Inferior: 0,
-        barraSeguidora4Superior: 0,
-        barraSeguidora4Medio: 0,
-        barraSeguidora4Inferior: 0,
-        barraSeguidora5Superior: 0,
-        barraSeguidora5Medio: 0,
-        barraSeguidora5Inferior: 0
-      });
     } catch (error) {
       console.error('Error guardando medición de aceros:', error);
       alert('Error al guardar la medición.');
     }
   };
 
-  // Sincronizar Mediciones de Aceros
-  const syncSteelMeasurements = async () => {
-    const unsynced = await db.steelMeasurements.where('synced').equals(0).toArray();
-    if (unsynced.length === 0) return;
 
-    for (const record of unsynced) {
-      try {
-        const iframe = document.createElement('iframe');
-        iframe.name = 'sync_measurement_' + Date.now();
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = GAS_URL;
-        form.target = iframe.name;
-
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'steelMeasurement';
-        input.value = JSON.stringify(record);
-        form.appendChild(input);
-
-        document.body.appendChild(form);
-        form.submit();
-
-        setTimeout(() => {
-          document.body.removeChild(form);
-          document.body.removeChild(iframe);
-        }, 5000);
-
-        await db.steelMeasurements.update(record.id!, { synced: 1 });
-        console.log('Medición de aceros sincronizada:', record.id);
-      } catch (error) {
-        console.error('Error sincronizando medición de aceros:', error);
-      }
-    }
-  };
 
   // Descargar eventos desde Google Sheets
   const downloadEventsFromSheet = async (): Promise<Event[]> => {
@@ -576,38 +598,72 @@ const App: React.FC = () => {
         createdAt: Date.now()
       };
 
-      console.log('Guardando evento...', record);
-      await db.events.add(record);
-
-      // Feedback visual
-      const btn = document.querySelector('.btn-save-event');
-      if (btn) {
-        const originalText = btn.textContent;
-        btn.textContent = '¡GUARDADO!';
-        setTimeout(() => btn.textContent = originalText, 2000);
+      const recordStr = JSON.stringify(record);
+      if (lastSavedDrafts['draft_newEventData'] === recordStr) {
+        alert('Esta información ya ha sido guardada en este dispositivo.');
+        return;
       }
 
-      // Actualizar conteo
+      let syncSuccess = false;
+      const btn = document.querySelector('.btn-save-event');
+      const originalText = btn?.textContent || 'GUARDAR EVENTO';
+
+      let eventToSync = { ...record };
+
+      if (isOnline) {
+        try {
+          if (btn) btn.textContent = 'Sincronizando...';
+          
+          if (record.photo && record.photo.startsWith('data:image')) {
+            const driveUrl = await uploadPhotoToDrive(record.photo);
+            if (driveUrl) {
+              eventToSync.photo = driveUrl;
+            }
+          }
+
+          const fd = new FormData();
+          fd.append('event', JSON.stringify(eventToSync));
+          const res = await fetch(GAS_URL, { method: 'POST', body: fd });
+          const json = await res.json();
+          if (json.success) syncSuccess = true;
+        } catch (e) {
+           console.error('Error enviando a nube:', e);
+        }
+      }
+
+      eventToSync.synced = syncSuccess ? 1 : 0;
+      await db.events.add(eventToSync);
+
       const newCount = await db.reports.where('synced').equals(0).count() +
         await db.steelChanges.where('synced').equals(0).count() +
         await db.steelMeasurements.where('synced').equals(0).count() +
         await db.events.where('synced').equals(0).count();
       setPendingCount(newCount);
 
-      if (isOnline) {
-        await syncEvents();
+      if (syncSuccess) {
+        setNewEventData({
+          date: new Date().toISOString().split('T')[0],
+          title: '',
+          description: '',
+          responsible: '',
+          photo: ''
+        });
+        localStorage.removeItem('draft_newEventData');
+        lastSavedDrafts['draft_newEventData'] = '';
+        await loadOpenEvents();
+        setCurrentPage('eventos');
+        
+        if (btn) {
+          btn.textContent = '¡GUARDADO EN LA NUBE!';
+          setTimeout(() => btn.textContent = originalText, 2500);
+        }
+      } else {
+        lastSavedDrafts['draft_newEventData'] = recordStr;
+        if (btn) btn.textContent = originalText;
+        alert(isOnline ? 'Error en nube. Guardado local.' : 'Sin internet. Guardado localmente.');
+        await loadOpenEvents();
+        setCurrentPage('eventos');
       }
-
-      // Limpiar formulario y volver a lista
-      setNewEventData({
-        date: new Date().toISOString().split('T')[0],
-        title: '',
-        description: '',
-        responsible: '',
-        photo: ''
-      });
-      await loadOpenEvents();
-      setCurrentPage('eventos');
     } catch (error) {
       console.error('Error guardando evento:', error);
       alert('Error al guardar el evento.');
@@ -736,57 +792,7 @@ const App: React.FC = () => {
     }
   };
 
-  // Sincronizar Eventos (con subida de fotos pendientes)
-  const syncEvents = async () => {
-    const unsynced = await db.events.where('synced').equals(0).toArray();
-    if (unsynced.length === 0) return;
 
-    for (const record of unsynced) {
-      try {
-        let eventToSync = { ...record };
-
-        // Si la foto es base64 (no una URL), subirla primero a Drive
-        if (record.photo && record.photo.startsWith('data:image')) {
-          console.log('Subiendo foto pendiente a Drive para evento:', record.id);
-          const driveUrl = await uploadPhotoToDrive(record.photo);
-          if (driveUrl) {
-            eventToSync.photo = driveUrl;
-            // Actualizar también en la BD local
-            await db.events.update(record.id!, { photo: driveUrl });
-          }
-        }
-
-        const iframe = document.createElement('iframe');
-        iframe.name = 'sync_event_' + Date.now();
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = GAS_URL;
-        form.target = iframe.name;
-
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'event';
-        input.value = JSON.stringify(eventToSync);
-        form.appendChild(input);
-
-        document.body.appendChild(form);
-        form.submit();
-
-        setTimeout(() => {
-          document.body.removeChild(form);
-          document.body.removeChild(iframe);
-        }, 5000);
-
-        await db.events.update(record.id!, { synced: 1 });
-        console.log('Evento sincronizado:', record.id);
-      } catch (error) {
-        console.error('Error sincronizando evento:', error);
-      }
-    }
-  };
 
   // Manejar foto - sube a Google Drive si hay conexión
   const handlePhotoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1037,68 +1043,56 @@ const App: React.FC = () => {
         createdAt: Date.now()
       };
 
-      console.log('Guardando descarte de aceros...', record);
-      await db.steelDiscards.add(record);
-
-      // Feedback visual
-      const btn = document.querySelector('.btn-save-discard');
-      if (btn) {
-        const originalText = btn.textContent;
-        btn.textContent = '¡GUARDADO!';
-        setTimeout(() => btn.textContent = originalText, 2000);
+      const recordStr = JSON.stringify(record);
+      if (lastSavedDrafts['draft_discardData'] === recordStr) {
+        alert('Esta información ya ha sido guardada en este dispositivo.');
+        return;
       }
+
+      let syncSuccess = false;
+      const btn = document.querySelector('.btn-save-discard');
+      const originalText = btn?.textContent || 'GUARDAR DESCARTE';
+
+      let dataToSync = { ...record };
 
       if (isOnline) {
-        await syncSteelDiscards();
+        try {
+          if (btn) btn.textContent = 'Sincronizando...';
+          const fd = new FormData();
+          fd.append('steelDiscard', JSON.stringify(dataToSync));
+          const res = await fetch(GAS_URL, { method: 'POST', body: fd });
+          const json = await res.json();
+          if (json.success) syncSuccess = true;
+        } catch (e) {
+          console.error('Error enviando a nube:', e);
+        }
       }
 
-      resetDiscardForm();
-      setCurrentPage('tecnico');
-      alert('Registro de descarte guardado correctamente');
+      dataToSync.synced = syncSuccess ? 1 : 0;
+      await db.steelDiscards.add(dataToSync);
+
+      if (syncSuccess) {
+        resetDiscardForm();
+        localStorage.removeItem('draft_discardData');
+        lastSavedDrafts['draft_discardData'] = '';
+        setCurrentPage('tecnico');
+        if (btn) {
+          btn.textContent = '¡GUARDADO EN LA NUBE!';
+          setTimeout(() => btn.textContent = originalText, 2500);
+        }
+      } else {
+        lastSavedDrafts['draft_discardData'] = recordStr;
+        if (btn) btn.textContent = originalText;
+        alert(isOnline ? 'Error en nube. Guardado local.' : 'Sin internet. Guardado localmente.');
+        setCurrentPage('tecnico');
+      }
     } catch (error) {
       console.error('Error guardando descarte:', error);
       alert('Error al guardar el registro.');
     }
   };
 
-  // Sincronizar descartes de aceros
-  const syncSteelDiscards = async () => {
-    const unsynced = await db.steelDiscards.where('synced').equals(0).toArray();
-    if (unsynced.length === 0) return;
 
-    for (const record of unsynced) {
-      try {
-        const iframe = document.createElement('iframe');
-        iframe.name = 'sync_discard_' + Date.now();
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = GAS_URL;
-        form.target = iframe.name;
-
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'steelDiscard';
-        input.value = JSON.stringify(record);
-        form.appendChild(input);
-
-        document.body.appendChild(form);
-        form.submit();
-
-        setTimeout(() => {
-          document.body.removeChild(form);
-          document.body.removeChild(iframe);
-        }, 5000);
-
-        await db.steelDiscards.update(record.id!, { synced: 1 });
-        console.log('Descarte sincronizado:', record.id);
-      } catch (error) {
-        console.error('Error sincronizando descarte:', error);
-      }
-    }
-  };
 
   // Manejar foto de descarte
   const handleDiscardPhotoChange = (fieldName: string) => async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1145,6 +1139,22 @@ const App: React.FC = () => {
     };
     reader.readAsDataURL(file);
   };
+
+  const hasDraftReport = 
+    reportData.drillNumber !== '' ||
+    reportData.operator !== '' ||
+    reportData.bench !== '' ||
+    reportData.phase !== '' ||
+    reportData.mesh !== '' ||
+    reportData.triconeBrand !== '' ||
+    reportData.triconeModel !== '' ||
+    reportData.triconeSerial !== '' ||
+    wells.length > 0;
+    
+  const hasDraftSteel = steelChangeData.drillNumber || steelChangeData.serialNumber || steelChangeData.comments;
+  const hasDraftMeasurement = steelMeasurementData.drillNumber || steelMeasurementData.adaptadorInferiorMedio > 0 || steelMeasurementData.barraPateraSuperior > 0;
+  const hasDraftEvent = newEventData.title || newEventData.description || newEventData.responsible;
+  const hasDraftDiscard = discardData.serie || discardData.equipo || discardData.causaDescarte;
 
   return (
     <div>
@@ -1193,26 +1203,32 @@ const App: React.FC = () => {
             <div className="form-grid">
               <div className="form-group">
                 <label>Fecha</label>
-                <input type="date" defaultValue={new Date().toISOString().split('T')[0]} />
+                <input type="date" value={reportData.date} onChange={(e) => setReportData({ ...reportData, date: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Turno</label>
-                <select>
+                <select value={reportData.shift} onChange={(e) => setReportData({ ...reportData, shift: e.target.value })}>
                   <option>TURNO A</option>
                   <option>TURNO B</option>
                 </select>
               </div>
               <div className="form-group">
-                <label>N° Perforadora</label>
-                <select>
-                  <option>101</option>
-                  <option>102</option>
-                  <option>103</option>
+                <label>Perforadora</label>
+                <select value={reportData.drillNumber} onChange={(e) => setReportData({ ...reportData, drillNumber: e.target.value })}>
+                  <option value="">Seleccionar...</option>
+                  <option value="5">5</option>
+                  <option value="8">8</option>
+                  <option value="9">9</option>
+                  <option value="10">10</option>
+                  <option value="11">11</option>
+                  <option value="12">12</option>
+                  <option value="13">13</option>
+                  <option value="14">14</option>
                 </select>
               </div>
               <div className="form-group">
                 <label>Operador *</label>
-                <input type="text" placeholder="Nombre" />
+                <input type="text" placeholder="Nombre" value={reportData.operator} onChange={(e) => setReportData({ ...reportData, operator: e.target.value })} />
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px' }}>
                   <input type="checkbox" id="saveName" style={{ width: 'auto' }} />
                   <label htmlFor="saveName" style={{ textTransform: 'none', fontSize: '0.7rem' }}>Guardar nombre</label>
@@ -1220,15 +1236,15 @@ const App: React.FC = () => {
               </div>
               <div className="form-group">
                 <label>Banco</label>
-                <input type="text" placeholder="2210" />
+                <input type="text" placeholder="2210" value={reportData.bench} onChange={(e) => setReportData({ ...reportData, bench: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Fase</label>
-                <input type="text" placeholder="8" />
+                <input type="text" placeholder="8" value={reportData.phase} onChange={(e) => setReportData({ ...reportData, phase: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Malla</label>
-                <input type="text" className="full-width" placeholder="12" />
+                <input type="text" className="full-width" placeholder="12" value={reportData.mesh} onChange={(e) => setReportData({ ...reportData, mesh: e.target.value })} />
               </div>
             </div>
           </section>
@@ -1242,19 +1258,19 @@ const App: React.FC = () => {
             <div className="form-grid">
               <div className="form-group">
                 <label>Marca</label>
-                <input type="text" placeholder="Shareate1" />
+                <input type="text" placeholder="Shareate1" value={reportData.triconeBrand} onChange={(e) => setReportData({ ...reportData, triconeBrand: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Modelo</label>
-                <input type="text" placeholder="615r" />
+                <input type="text" placeholder="615r" value={reportData.triconeModel} onChange={(e) => setReportData({ ...reportData, triconeModel: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Serie</label>
-                <input type="text" placeholder="78452211" />
+                <input type="text" placeholder="78452211" value={reportData.triconeSerial} onChange={(e) => setReportData({ ...reportData, triconeSerial: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Diámetro</label>
-                <select>
+                <select value={reportData.triconeDiameter} onChange={(e) => setReportData({ ...reportData, triconeDiameter: e.target.value })}>
                   <option>10 5/8"</option>
                   <option>7 7/8"</option>
                 </select>
@@ -1423,7 +1439,7 @@ const App: React.FC = () => {
             </button>
           </div>
 
-          <button className="btn-save" onClick={handleSave}>
+          <button className={`btn-save ${hasDraftReport ? 'pulse-red' : ''}`} onClick={handleSave}>
             <Save size={24} />
             GUARDAR REGISTRO
           </button>
@@ -1462,19 +1478,20 @@ const App: React.FC = () => {
             </div>
             <div className="form-grid">
               <div className="form-group">
-                <label>PERFORADORA</label>
+                <label>Perforadora</label>
                 <select
                   value={steelChangeData.drillNumber}
                   onChange={(e) => setSteelChangeData({ ...steelChangeData, drillNumber: e.target.value })}
                 >
-                  <option value="101">101</option>
-                  <option value="102">102</option>
-                  <option value="103">103</option>
-                  <option value="104">104</option>
-                  <option value="105">105</option>
-                  <option value="106">106</option>
-                  <option value="111">111</option>
-                  <option value="112">112</option>
+                  <option value="">Seleccionar...</option>
+                  <option value="5">5</option>
+                  <option value="8">8</option>
+                  <option value="9">9</option>
+                  <option value="10">10</option>
+                  <option value="11">11</option>
+                  <option value="12">12</option>
+                  <option value="13">13</option>
+                  <option value="14">14</option>
                 </select>
               </div>
               <div className="form-group">
@@ -1544,7 +1561,7 @@ const App: React.FC = () => {
               ← VOLVER
             </button>
             <button
-              className="btn-save btn-save-steel"
+              className={`btn-save btn-save-steel ${hasDraftSteel ? 'pulse-red' : ''}`}
               onClick={handleSaveSteelChange}
               style={{ flex: 2 }}
             >
@@ -1594,7 +1611,7 @@ const App: React.FC = () => {
                 </select>
               </div>
               <div className="form-group">
-                <label>PERFORADORA</label>
+                <label>Perforadora</label>
                 <select
                   value={steelMeasurementData.drillNumber}
                   onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, drillNumber: e.target.value })}
@@ -1770,7 +1787,7 @@ const App: React.FC = () => {
               ← VOLVER
             </button>
             <button
-              className="btn-save btn-save-measurement"
+              className={`btn-save btn-save-measurement ${hasDraftMeasurement ? 'pulse-red' : ''}`}
               onClick={handleSaveSteelMeasurement}
               style={{ flex: 2 }}
             >
@@ -2054,7 +2071,7 @@ const App: React.FC = () => {
               ← CANCELAR
             </button>
             <button
-              className="btn-save btn-save-event"
+              className={`btn-save btn-save-event ${hasDraftEvent ? 'pulse-red' : ''}`}
               onClick={handleSaveEvent}
               style={{ flex: 2 }}
             >
@@ -2101,6 +2118,26 @@ const App: React.FC = () => {
               </p>
             </section>
 
+            {/* Descarte de Aceros */}
+            <section
+              className="card"
+              onClick={() => setCurrentPage('descarteAceros')}
+              style={{ cursor: 'pointer', textAlign: 'center' }}>
+              <div style={{
+                background: 'rgba(255, 193, 7, 0.1)',
+                borderRadius: '12px',
+                padding: '1rem',
+                display: 'inline-block',
+                marginBottom: '0.5rem'
+              }}>
+                <Trash2 size={32} style={{ color: '#ffc107' }} />
+              </div>
+              <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem' }}>Descarte de Aceros</h3>
+              <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
+                Registro de componentes fuera de servicio
+              </p>
+            </section>
+
             {/* Control de Diámetros */}
             <section className="card" style={{ cursor: 'pointer', textAlign: 'center', opacity: 0.6 }}>
               <div style={{
@@ -2132,43 +2169,6 @@ const App: React.FC = () => {
               <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem' }}>Estadística de Aceros</h3>
               <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
                 Próximamente
-              </p>
-            </section>
-
-            {/* Bitácora - deshabilitado */}
-            <section className="card" style={{ textAlign: 'center', opacity: 0.4 }}>
-              <div style={{
-                background: 'rgba(128, 128, 128, 0.1)',
-                borderRadius: '12px',
-                padding: '1rem',
-                display: 'inline-block',
-                marginBottom: '0.5rem'
-              }}>
-                <FileText size={32} style={{ color: '#888' }} />
-              </div>
-              <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem', color: '#888' }}>Bitácora</h3>
-              <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
-                Acceder desde menú principal
-              </p>
-            </section>
-
-            {/* Descarte de Aceros */}
-            <section
-              className="card"
-              onClick={() => setCurrentPage('descarteAceros')}
-              style={{ cursor: 'pointer', textAlign: 'center', gridColumn: 'span 2' }}>
-              <div style={{
-                background: 'rgba(255, 193, 7, 0.1)',
-                borderRadius: '12px',
-                padding: '1rem',
-                display: 'inline-block',
-                marginBottom: '0.5rem'
-              }}>
-                <Trash2 size={32} style={{ color: '#ffc107' }} />
-              </div>
-              <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem' }}>Descarte de Aceros</h3>
-              <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
-                Registro de componentes fuera de servicio
               </p>
             </section>
           </div>
@@ -2587,7 +2587,7 @@ const App: React.FC = () => {
               CANCELAR
             </button>
             <button
-              className="btn-save btn-save-discard"
+              className={`btn-save btn-save-discard ${hasDraftDiscard ? 'pulse-red' : ''}`}
               onClick={handleSaveDiscard}
               style={{ flex: 2 }}
               disabled={uploadingDiscardPhoto}
@@ -2600,6 +2600,14 @@ const App: React.FC = () => {
       )}
 
       <nav className="bottom-nav">
+        <a
+          href="#"
+          className={`nav-item ${currentPage === 'reporte' ? 'active' : ''}`}
+          onClick={(e) => { e.preventDefault(); setCurrentPage('reporte'); }}
+        >
+          <Home size={24} />
+          <span>Inicio</span>
+        </a>
         <a
           href="#"
           className={`nav-item ${currentPage === 'cambioAceros' ? 'active' : ''}`}
