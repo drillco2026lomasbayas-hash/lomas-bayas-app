@@ -130,21 +130,36 @@ function getLastInventoryFromSheet(ss) {
     const data = sheet.getDataRange().getValues();
     if (data.length <= 1) return null; // Solo encabezados
 
-    // Obtener la última fila
-    const lastRow = data[data.length - 1];
+    // Obtener la fila de cantidades (ignorar fila de observaciones si es la última)
+    let lastQtyRow = data[data.length - 1];
+    let obsRow = null;
+
+    if (lastQtyRow[1] === 'OBSERVACIONES / SN' && data.length > 2) {
+        obsRow = lastQtyRow;
+        lastQtyRow = data[data.length - 2];
+    }
     const headers = data[0];
 
     const inventory = {
-        date: lastRow[0],
+        date: lastQtyRow[0],
         synced: 1,
-        createdAt: new Date(lastRow[1]).getTime() || Date.now()
+        createdAt: new Date(lastQtyRow[1]).getTime() || Date.now(),
+        observations: {}
     };
 
     // Mapear los valores dinámicos
     for (let i = 2; i < headers.length; i++) {
-        if (headers[i] && lastRow[i] !== undefined) {
-            // Intentar convertir el header a una clave válida
-            inventory[headers[i]] = lastRow[i];
+        if (headers[i]) {
+            if (lastQtyRow[i] !== undefined) {
+                // Intentar convertir el header a una clave válida
+                inventory[headers[i]] = lastQtyRow[i];
+            }
+            if (obsRow && obsRow[i] !== undefined && typeof obsRow[i] === 'string' && obsRow[i].trim() !== '') {
+                if (headers[i].endsWith('_central')) {
+                    const baseKey = headers[i].replace('_central', '');
+                    inventory.observations[baseKey] = obsRow[i];
+                }
+            }
         }
     }
 
@@ -370,9 +385,11 @@ function saveSteelMeasurement(ss, data) {
 function saveInventory(ss, data) {
     let sheet = ss.getSheetByName('Inventario');
 
-    // Obtener las claves de inventario (excluyendo campos del sistema)
+    const obsData = data.observations || {};
+
+    // Obtener las claves de inventario (excluyendo campos del sistema y observaciones)
     const inventoryKeys = Object.keys(data).filter(key =>
-        key !== 'id' && key !== 'date' && key !== 'synced' && key !== 'createdAt'
+        key !== 'id' && key !== 'date' && key !== 'synced' && key !== 'createdAt' && key !== 'observations'
     );
 
     if (!sheet) {
@@ -393,13 +410,24 @@ function saveInventory(ss, data) {
         }
     }
 
-    // Construir la fila con todos los campos del inventario en el orden correcto
-    const row = [data.date, new Date(data.createdAt).toLocaleString('es-CL')];
+    // Fila Par: Cantidades
+    const rowQty = [data.date, new Date(data.createdAt).toLocaleString('es-CL')];
     inventoryKeys.forEach(key => {
-        row.push(data[key] || 0);
+        rowQty.push(data[key] || 0);
     });
+    sheet.appendRow(rowQty);
 
-    sheet.appendRow(row);
+    // Fila Impar: Observaciones/SN
+    const rowObs = [data.date, 'OBSERVACIONES / SN'];
+    inventoryKeys.forEach(key => {
+        if (key.endsWith('_central')) {
+            const baseKey = key.replace('_central', '');
+            rowObs.push(obsData[baseKey] || '');
+        } else {
+            rowObs.push(''); // Columna de mina vacía
+        }
+    });
+    sheet.appendRow(rowObs);
 }
 
 /**

@@ -93,6 +93,7 @@ export interface Event {
 export interface InventoryRecord {
   id?: number;
   date: string;
+  observations?: Record<string, string>;
   // ROC 8,11 y 14
   roc_martPM62_central: number;
   roc_martPM62_mina: number;

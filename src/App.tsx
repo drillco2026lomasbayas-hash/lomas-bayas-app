@@ -10,7 +10,9 @@ import {
   Wifi,
   WifiOff,
   Trash2,
-  Home
+  Home,
+  Camera,
+  Image
 } from 'lucide-react';
 import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard } from './db';
 import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
@@ -109,6 +111,8 @@ const App: React.FC = () => {
 
   // Estado para Inventario
   const [inventoryData, setInventoryData] = useState<Record<string, number>>(createEmptyInventory());
+  const [inventoryObs, setInventoryObs] = useState<Record<string, string>>({});
+  const [openSnRow, setOpenSnRow] = useState<string | null>(null);
   const [inventoryDate, setInventoryDate] = useState(new Date().toISOString().split('T')[0]);
   const [lastInventoryDate, setLastInventoryDate] = useState<string | null>(null);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
@@ -926,10 +930,14 @@ const App: React.FC = () => {
         });
       });
       setInventoryData(newData);
+      setInventoryObs(localRecord.observations || {});
+      setOpenSnRow(null);
       setInventoryDate(localRecord.date); // Precargar la fecha también
     } else {
       setLastInventoryDate(null);
       setInventoryData(createEmptyInventory());
+      setInventoryObs({});
+      setOpenSnRow(null);
     }
   };
 
@@ -939,6 +947,7 @@ const App: React.FC = () => {
       const record = {
         date: inventoryDate,
         ...inventoryData,
+        observations: inventoryObs,
         synced: 0,
         createdAt: Date.now()
       } as Omit<InventoryRecord, 'id'>;
@@ -2049,15 +2058,29 @@ const App: React.FC = () => {
                   ⏳ SUBIENDO FOTO...
                 </div>
               ) : (
-                <label className="btn-save" style={{ display: 'inline-flex', cursor: 'pointer' }}>
-                  📷 TOMAR FOTO / GALERÍA
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePhotoChange}
-                    style={{ display: 'none' }}
-                  />
-                </label>
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+                  <label className="btn-save" style={{ flex: 1, display: 'inline-flex', cursor: 'pointer', background: 'var(--primary)' }}>
+                    <Camera size={20} style={{ marginRight: '8px' }} />
+                    CÁMARA
+                    <input
+                      type="file"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handlePhotoChange}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
+                  <label className="btn-save" style={{ flex: 1, display: 'inline-flex', cursor: 'pointer', background: 'var(--secondary)' }}>
+                    <Image size={20} style={{ marginRight: '8px' }} />
+                    GALERÍA
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoChange}
+                      style={{ display: 'none' }}
+                    />
+                  </label>
+                </div>
               )}
             </div>
           </section>
@@ -2219,134 +2242,182 @@ const App: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {INVENTORY_CATEGORIES.map((category, catIdx) => (
-                  category.items.map((item, itemIdx) => (
-                    <tr key={item.key} style={{ borderBottom: '1px solid var(--border)', background: catIdx % 2 === 0 ? '#f8f9fa' : 'white' }}>
-                      {itemIdx === 0 && (
-                        <td
-                          rowSpan={category.items.length}
-                          style={{
-                            padding: '0.5rem',
-                            fontWeight: 'bold',
-                            verticalAlign: 'middle',
-                            background: catIdx % 2 === 0 ? '#e9ecef' : '#f8f9fa',
-                            position: 'sticky',
-                            left: 0,
-                            fontSize: '0.75rem'
-                          }}
-                        >
-                          {category.name}
+                {INVENTORY_CATEGORIES.map((category, catIdx) => {
+                  const hasExpandedChild = category.items.some(i => i.key === openSnRow);
+                  const newRowSpan = category.items.length + (hasExpandedChild ? 1 : 0);
+
+                  return category.items.map((item, itemIdx) => (
+                    <React.Fragment key={item.key}>
+                      <tr style={{ borderBottom: '1px solid var(--border)', background: catIdx % 2 === 0 ? '#f8f9fa' : 'white' }}>
+                        {itemIdx === 0 && (
+                          <td
+                            rowSpan={newRowSpan}
+                            style={{
+                              padding: '0.5rem',
+                              fontWeight: 'bold',
+                              verticalAlign: 'middle',
+                              background: catIdx % 2 === 0 ? '#e9ecef' : '#f8f9fa',
+                              position: 'sticky',
+                              left: 0,
+                              fontSize: '0.75rem'
+                            }}
+                          >
+                            {category.name}
+                          </td>
+                        )}
+                        <td style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem' }}>{item.name}</td>
+                        <td style={{ padding: '0.3rem', textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-light)' }}>{item.sap}</td>
+                        <td style={{ padding: '0.2rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                            <button
+                              onClick={() => setInventoryData({
+                                ...inventoryData,
+                                [`${item.key}_central`]: Math.max(0, (inventoryData[`${item.key}_central`] || 0) - 1)
+                              })}
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: '#f8f9fa',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '1rem'
+                              }}
+                            >−</button>
+                            <input
+                              type="number"
+                              min="0"
+                              value={inventoryData[`${item.key}_central`] || 0}
+                              onChange={(e) => setInventoryData({
+                                ...inventoryData,
+                                [`${item.key}_central`]: parseInt(e.target.value) || 0
+                              })}
+                              style={{
+                                width: '45px',
+                                padding: '0.25rem',
+                                textAlign: 'center',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px'
+                              }}
+                            />
+                            <button
+                              onClick={() => setInventoryData({
+                                ...inventoryData,
+                                [`${item.key}_central`]: (inventoryData[`${item.key}_central`] || 0) + 1
+                              })}
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: '#f8f9fa',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '1rem'
+                              }}
+                            >+</button>
+
+                            <button
+                              onClick={() => setOpenSnRow(openSnRow === item.key ? null : item.key)}
+                              style={{
+                                marginLeft: '6px',
+                                width: '28px',
+                                height: '28px',
+                                border: '1px solid var(--primary)',
+                                borderRadius: '4px',
+                                background: openSnRow === item.key ? 'var(--primary)' : 'white',
+                                color: openSnRow === item.key ? 'white' : 'var(--primary)',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '0.75rem',
+                                padding: 0
+                              }}
+                            >
+                              SN
+                            </button>
+                          </div>
                         </td>
+                        <td style={{ padding: '0.2rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+                            <button
+                              onClick={() => setInventoryData({
+                                ...inventoryData,
+                                [`${item.key}_mina`]: Math.max(0, (inventoryData[`${item.key}_mina`] || 0) - 1)
+                              })}
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: '#f8f9fa',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '1rem'
+                              }}
+                            >−</button>
+                            <input
+                              type="number"
+                              min="0"
+                              value={inventoryData[`${item.key}_mina`] || 0}
+                              onChange={(e) => setInventoryData({
+                                ...inventoryData,
+                                [`${item.key}_mina`]: parseInt(e.target.value) || 0
+                              })}
+                              style={{
+                                width: '45px',
+                                padding: '0.25rem',
+                                textAlign: 'center',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px'
+                              }}
+                            />
+                            <button
+                              onClick={() => setInventoryData({
+                                ...inventoryData,
+                                [`${item.key}_mina`]: (inventoryData[`${item.key}_mina`] || 0) + 1
+                              })}
+                              style={{
+                                width: '28px',
+                                height: '28px',
+                                border: '1px solid var(--border)',
+                                borderRadius: '4px',
+                                background: '#f8f9fa',
+                                cursor: 'pointer',
+                                fontWeight: 'bold',
+                                fontSize: '1rem'
+                              }}
+                            >+</button>
+                          </div>
+                        </td>
+                      </tr>
+                      {openSnRow === item.key && (
+                        <tr style={{ background: '#fffbcc' }}>
+                          <td colSpan={4} style={{ padding: '0.5rem' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                              <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#856404' }}>
+                                Observaciones / N° Serie para {item.name}:
+                              </label>
+                              <input 
+                                type="text" 
+                                placeholder="Ingrese números de serie u observaciones..." 
+                                value={inventoryObs[item.key] || ''}
+                                onChange={(e) => setInventoryObs({ ...inventoryObs, [item.key]: e.target.value })}
+                                style={{ 
+                                  width: '100%', 
+                                  padding: '0.4rem', 
+                                  border: '1px solid #ffe066', 
+                                  borderRadius: '4px', 
+                                  fontSize: '0.85rem' 
+                                }}
+                              />
+                            </div>
+                          </td>
+                        </tr>
                       )}
-                      <td style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem' }}>{item.name}</td>
-                      <td style={{ padding: '0.3rem', textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-light)' }}>{item.sap}</td>
-                      <td style={{ padding: '0.2rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                          <button
-                            onClick={() => setInventoryData({
-                              ...inventoryData,
-                              [`${item.key}_central`]: Math.max(0, (inventoryData[`${item.key}_central`] || 0) - 1)
-                            })}
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              border: '1px solid var(--border)',
-                              borderRadius: '4px',
-                              background: '#f8f9fa',
-                              cursor: 'pointer',
-                              fontWeight: 'bold',
-                              fontSize: '1rem'
-                            }}
-                          >−</button>
-                          <input
-                            type="number"
-                            min="0"
-                            value={inventoryData[`${item.key}_central`] || 0}
-                            onChange={(e) => setInventoryData({
-                              ...inventoryData,
-                              [`${item.key}_central`]: parseInt(e.target.value) || 0
-                            })}
-                            style={{
-                              width: '45px',
-                              padding: '0.25rem',
-                              textAlign: 'center',
-                              border: '1px solid var(--border)',
-                              borderRadius: '4px'
-                            }}
-                          />
-                          <button
-                            onClick={() => setInventoryData({
-                              ...inventoryData,
-                              [`${item.key}_central`]: (inventoryData[`${item.key}_central`] || 0) + 1
-                            })}
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              border: '1px solid var(--border)',
-                              borderRadius: '4px',
-                              background: '#f8f9fa',
-                              cursor: 'pointer',
-                              fontWeight: 'bold',
-                              fontSize: '1rem'
-                            }}
-                          >+</button>
-                        </div>
-                      </td>
-                      <td style={{ padding: '0.2rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                          <button
-                            onClick={() => setInventoryData({
-                              ...inventoryData,
-                              [`${item.key}_mina`]: Math.max(0, (inventoryData[`${item.key}_mina`] || 0) - 1)
-                            })}
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              border: '1px solid var(--border)',
-                              borderRadius: '4px',
-                              background: '#f8f9fa',
-                              cursor: 'pointer',
-                              fontWeight: 'bold',
-                              fontSize: '1rem'
-                            }}
-                          >−</button>
-                          <input
-                            type="number"
-                            min="0"
-                            value={inventoryData[`${item.key}_mina`] || 0}
-                            onChange={(e) => setInventoryData({
-                              ...inventoryData,
-                              [`${item.key}_mina`]: parseInt(e.target.value) || 0
-                            })}
-                            style={{
-                              width: '45px',
-                              padding: '0.25rem',
-                              textAlign: 'center',
-                              border: '1px solid var(--border)',
-                              borderRadius: '4px'
-                            }}
-                          />
-                          <button
-                            onClick={() => setInventoryData({
-                              ...inventoryData,
-                              [`${item.key}_mina`]: (inventoryData[`${item.key}_mina`] || 0) + 1
-                            })}
-                            style={{
-                              width: '28px',
-                              height: '28px',
-                              border: '1px solid var(--border)',
-                              borderRadius: '4px',
-                              background: '#f8f9fa',
-                              cursor: 'pointer',
-                              fontWeight: 'bold',
-                              fontSize: '1rem'
-                            }}
-                          >+</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))
-                ))}
+                    </React.Fragment>
+                  ));
+                })}
               </tbody>
             </table>
           </div>
@@ -2526,22 +2597,55 @@ const App: React.FC = () => {
               {(discardData.tipoAcero === 'Bit' || discardData.tipoAcero === 'Martillo') && (
                 <>
                   <div className="form-group">
-                    <label>Foto Serie</label>
-                    <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoSerie')} />
-                    {discardData.fotoSerie && <p style={{ fontSize: '0.7rem', color: 'var(--success)' }}>✓ Foto cargada</p>}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label>Foto Serie</label>
+                      {discardData.fotoSerie && <span style={{ fontSize: '0.7rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ LISTA</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
+                      <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                         <Camera size={14} style={{ marginRight: '4px' }}/> Cámara
+                         <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoSerie')} style={{ display: 'none' }} />
+                      </label>
+                      <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                         <Image size={14} style={{ marginRight: '4px' }}/> Galería
+                         <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoSerie')} style={{ display: 'none' }} />
+                      </label>
+                    </div>
                   </div>
                   <div className="form-group">
-                    <label>Foto Cuerpo</label>
-                    <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoCuerpo')} />
-                    {discardData.fotoCuerpo && <p style={{ fontSize: '0.7rem', color: 'var(--success)' }}>✓ Foto cargada</p>}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label>Foto Cuerpo</label>
+                      {discardData.fotoCuerpo && <span style={{ fontSize: '0.7rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ LISTA</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
+                      <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                         <Camera size={14} style={{ marginRight: '4px' }}/> Cámara
+                         <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoCuerpo')} style={{ display: 'none' }} />
+                      </label>
+                      <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                         <Image size={14} style={{ marginRight: '4px' }}/> Galería
+                         <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoCuerpo')} style={{ display: 'none' }} />
+                      </label>
+                    </div>
                   </div>
                 </>
               )}
               {discardData.tipoAcero === 'Bit' && (
                 <div className="form-group">
-                  <label>Foto Botones</label>
-                  <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoBotones')} />
-                  {discardData.fotoBotones && <p style={{ fontSize: '0.7rem', color: 'var(--success)' }}>✓ Foto cargada</p>}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <label>Foto Botones</label>
+                      {discardData.fotoBotones && <span style={{ fontSize: '0.7rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ LISTA</span>}
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
+                      <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                         <Camera size={14} style={{ marginRight: '4px' }}/> Cámara
+                         <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoBotones')} style={{ display: 'none' }} />
+                      </label>
+                      <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                         <Image size={14} style={{ marginRight: '4px' }}/> Galería
+                         <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoBotones')} style={{ display: 'none' }} />
+                      </label>
+                    </div>
                 </div>
               )}
 
@@ -2560,9 +2664,20 @@ const App: React.FC = () => {
                     { key: 'fotoConos', obsKey: 'obsConos', label: 'Conos' },
                   ].map((item) => (
                     <div key={item.key} className="form-group" style={{ border: '1px solid var(--border)', padding: '0.5rem', borderRadius: '8px' }}>
-                      <label>{item.label}</label>
-                      <input type="file" accept="image/*" onChange={handleDiscardPhotoChange(item.key)} />
-                      {discardData[item.key as keyof typeof discardData] && <p style={{ fontSize: '0.7rem', color: 'var(--success)' }}>✓ Foto cargada</p>}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <label>{item.label}</label>
+                        {discardData[item.key as keyof typeof discardData] && <span style={{ fontSize: '0.7rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ LISTA</span>}
+                      </div>
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
+                        <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                           <Camera size={14} style={{ marginRight: '4px' }}/> Cámara
+                           <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange(item.key)} style={{ display: 'none' }} />
+                        </label>
+                        <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                           <Image size={14} style={{ marginRight: '4px' }}/> Galería
+                           <input type="file" accept="image/*" onChange={handleDiscardPhotoChange(item.key)} style={{ display: 'none' }} />
+                        </label>
+                      </div>
                       <input
                         type="text"
                         placeholder="Observaciones"
