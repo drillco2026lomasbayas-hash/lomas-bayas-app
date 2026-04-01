@@ -12,7 +12,7 @@ import {
   Trash2,
   Home,
   Camera,
-  Image
+  Image as ImageIcon
 } from 'lucide-react';
 import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard } from './db';
 import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
@@ -2070,8 +2070,8 @@ const App: React.FC = () => {
                       style={{ display: 'none' }}
                     />
                   </label>
-                  <label className="btn-save" style={{ flex: 1, display: 'inline-flex', cursor: 'pointer', background: 'var(--secondary)' }}>
-                    <Image size={20} style={{ marginRight: '8px' }} />
+                  <label className="btn-save" style={{ flex: 1, display: 'inline-flex', cursor: 'pointer', background: 'var(--secondary)', color: 'var(--white)' }}>
+                    <ImageIcon size={20} style={{ marginRight: '8px' }} />
                     GALERÍA
                     <input
                       type="file"
@@ -2607,7 +2607,7 @@ const App: React.FC = () => {
                          <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoSerie')} style={{ display: 'none' }} />
                       </label>
                       <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <Image size={14} style={{ marginRight: '4px' }}/> Galería
+                         <ImageIcon size={14} style={{ marginRight: '4px' }}/> Galería
                          <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoSerie')} style={{ display: 'none' }} />
                       </label>
                     </div>
@@ -2623,7 +2623,7 @@ const App: React.FC = () => {
                          <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoCuerpo')} style={{ display: 'none' }} />
                       </label>
                       <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <Image size={14} style={{ marginRight: '4px' }}/> Galería
+                         <ImageIcon size={14} style={{ marginRight: '4px' }}/> Galería
                          <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoCuerpo')} style={{ display: 'none' }} />
                       </label>
                     </div>
@@ -2642,7 +2642,7 @@ const App: React.FC = () => {
                          <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoBotones')} style={{ display: 'none' }} />
                       </label>
                       <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <Image size={14} style={{ marginRight: '4px' }}/> Galería
+                         <ImageIcon size={14} style={{ marginRight: '4px' }}/> Galería
                          <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoBotones')} style={{ display: 'none' }} />
                       </label>
                     </div>
@@ -2674,7 +2674,7 @@ const App: React.FC = () => {
                            <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange(item.key)} style={{ display: 'none' }} />
                         </label>
                         <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                           <Image size={14} style={{ marginRight: '4px' }}/> Galería
+                           <ImageIcon size={14} style={{ marginRight: '4px' }}/> Galería
                            <input type="file" accept="image/*" onChange={handleDiscardPhotoChange(item.key)} style={{ display: 'none' }} />
                         </label>
                       </div>
