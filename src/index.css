@@ -136,7 +136,8 @@ textarea {
 }
 
 .header {
-  background: var(--white);
+  background: var(--secondary);
+  color: var(--white);
   padding: 1rem;
   display: flex;
   justify-content: space-between;
@@ -160,13 +161,14 @@ textarea {
 
 .brand-title h1 {
   font-size: 1.25rem;
-  color: var(--secondary);
+  color: var(--white);
   font-weight: 800;
 }
 
 .brand-title p {
   font-size: 0.8rem;
-  color: var(--text-muted);
+  color: var(--white);
+  opacity: 0.8;
 }
 
 /* Well Registry specific */

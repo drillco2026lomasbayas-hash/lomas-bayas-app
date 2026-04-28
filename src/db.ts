@@ -73,6 +73,7 @@ export interface SteelMeasurement {
   barraSeguidora5Superior?: number;
   barraSeguidora5Medio?: number;
   barraSeguidora5Inferior?: number;
+  comentarios?: string;
   synced: number;
   createdAt: number;
 }

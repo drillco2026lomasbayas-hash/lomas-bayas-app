@@ -16,7 +16,35 @@ import {
 } from 'lucide-react';
 import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard } from './db';
 import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import './index.css';
+
+// Utilidad para cargar una imagen desde public/ como Base64 para usarla en jsPDF
+export const loadImageForPDF = async (url: string): Promise<{ data: string, width: number, height: number } | null> => {
+  try {
+    const response = await fetch(url);
+    const blob = await response.blob();
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+    
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        resolve({ data: dataUrl, width: img.naturalWidth, height: img.naturalHeight });
+      };
+      img.onerror = () => resolve(null);
+      img.src = dataUrl;
+    });
+  } catch (error) {
+    console.error('Error cargando imagen para PDF:', error);
+    return null;
+  }
+};
 
 const lastSavedDrafts: Record<string, string> = {};
 
@@ -91,7 +119,8 @@ const App: React.FC = () => {
       barraSeguidora4Inferior: 0,
       barraSeguidora5Superior: 0,
       barraSeguidora5Medio: 0,
-      barraSeguidora5Inferior: 0
+      barraSeguidora5Inferior: 0,
+      comentarios: ''
     };
   });
 
@@ -160,10 +189,20 @@ const App: React.FC = () => {
     return diff;
   };
 
+  // Helper: calcula el total de registros pendientes de sincronización
+  const getTotalPendingCount = async () => {
+    return await db.reports.where('synced').equals(0).count() +
+      await db.steelChanges.where('synced').equals(0).count() +
+      await db.steelMeasurements.where('synced').equals(0).count() +
+      await db.events.where('synced').equals(0).count() +
+      await db.inventoryRecords.where('synced').equals(0).count() +
+      await db.steelDiscards.where('synced').equals(0).count();
+  };
+
   // Cargar cantidad de registros pendientes y configurar listeners de conexión
   useEffect(() => {
     const updatePendingCount = async () => {
-      const count = await db.reports.where('synced').equals(0).count();
+      const count = await getTotalPendingCount();
       setPendingCount(count);
     };
 
@@ -276,11 +315,11 @@ const App: React.FC = () => {
         alert('Esta información ya ha sido guardada en este dispositivo.');
         return;
       }
-      
+
       let syncSuccess = false;
       const btn = document.querySelector('.btn-save');
-      const originalText = btn?.textContent || 'GUARDAR REGISTRO';
-      
+      const originalText = btn?.textContent || 'GUARDAR';
+
       if (isOnline) {
         try {
           if (btn) btn.textContent = 'Sincronizando...';
@@ -289,19 +328,18 @@ const App: React.FC = () => {
           const res = await fetch(GAS_URL, { method: 'POST', body: fd });
           const json = await res.json();
           if (json.success) syncSuccess = true;
-        } catch(e) { console.error('Error enviando a la nube:', e); }
+        } catch (e) { console.error('Error enviando a la nube:', e); }
       }
 
       recordToSave.synced = syncSuccess ? 1 : 0;
       await db.reports.add(recordToSave);
-      const newCount = await db.reports.where('synced').equals(0).count();
-      setPendingCount(newCount);
+      setPendingCount(await getTotalPendingCount());
 
       if (syncSuccess) {
         setWells([]);
         localStorage.removeItem('draft_wells');
         lastSavedDrafts['draft_wells'] = '';
-        
+
         setReportData({
           date: new Date().toISOString().split('T')[0],
           shift: 'TURNO A',
@@ -316,7 +354,7 @@ const App: React.FC = () => {
           triconeDiameter: '10 5/8"'
         });
         localStorage.removeItem('draft_reportData');
-        
+
         if (btn) {
           btn.textContent = '¡GUARDADO EN LA NUBE!';
           setTimeout(() => btn.textContent = originalText, 2500);
@@ -336,53 +374,40 @@ const App: React.FC = () => {
 
   const syncData = async () => {
     console.log('Iniciando sincronización...');
-    const unsynced = await db.reports.where('synced').equals(0).toArray();
-    console.log('Reportes pendientes de sincronizar:', unsynced.length);
-
-    if (unsynced.length === 0) return;
-
-    for (const report of unsynced) {
-      try {
-        if (!GAS_URL || GAS_URL.includes('TU_URL_DE_APPS_SCRIPT_AQUI')) {
-          console.warn('Sincronización cancelada: GAS_URL no configurada.');
-          return;
-        }
-
-        console.log('Sincronizando reporte:', report.id);
-
-        // Usamos un iframe oculto para enviar el formulario (evita CORS completamente)
-        const iframe = document.createElement('iframe');
-        iframe.name = 'sync_iframe_' + Date.now();
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
-
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = GAS_URL;
-        form.target = iframe.name;
-
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'payload';
-        input.value = JSON.stringify(report);
-        form.appendChild(input);
-
-        document.body.appendChild(form);
-        form.submit();
-
-        // Limpiar después de un breve tiempo
-        setTimeout(() => {
-          document.body.removeChild(form);
-          document.body.removeChild(iframe);
-        }, 5000);
-
-        // Marcar como sincronizado (asumimos éxito ya que no hay forma de verificar)
-        await db.reports.update(report.id!, { synced: 1 });
-        console.log('Reporte sincronizado con éxito:', report.id);
-      } catch (error) {
-        console.error('Fallo en la sincronización del reporte', report.id, error);
-      }
+    if (!GAS_URL || GAS_URL.includes('TU_URL_DE_APPS_SCRIPT_AQUI')) {
+      console.warn('Sincronización cancelada: GAS_URL no configurada.');
+      return;
     }
+
+    // Helper para sincronizar registros de cualquier tabla
+    const syncTable = async (table: typeof db.reports | typeof db.steelChanges | typeof db.steelMeasurements | typeof db.events | typeof db.inventoryRecords | typeof db.steelDiscards, fieldName: string) => {
+      const unsynced = await (table as any).where('synced').equals(0).toArray();
+      if (unsynced.length === 0) return;
+      console.log(`${fieldName}: ${unsynced.length} pendiente(s)`);
+
+      for (const record of unsynced) {
+        try {
+          const fd = new FormData();
+          fd.append(fieldName, JSON.stringify(record));
+          const res = await fetch(GAS_URL, { method: 'POST', body: fd });
+          const json = await res.json();
+          if (json.success) {
+            await (table as any).update(record.id!, { synced: 1 });
+            console.log(`${fieldName} sincronizado:`, record.id);
+          }
+        } catch (error) {
+          console.error(`Error sincronizando ${fieldName}:`, record.id, error);
+        }
+      }
+    };
+
+    // Sincronizar todas las tablas
+    await syncTable(db.reports, 'payload');
+    await syncTable(db.steelChanges, 'steelChange');
+    await syncTable(db.steelMeasurements, 'steelMeasurement');
+    await syncTable(db.events, 'event');
+    await syncTable(db.inventoryRecords, 'inventoryRecord');
+    await syncTable(db.steelDiscards, 'steelDiscard');
   };
 
   // Guardar Cambio de Aceros
@@ -402,7 +427,7 @@ const App: React.FC = () => {
 
       let syncSuccess = false;
       const btn = document.querySelector('.btn-save-steel');
-      const originalText = btn?.textContent || 'GUARDAR REGISTRO';
+      const originalText = btn?.textContent || 'GUARDAR';
 
       if (isOnline) {
         try {
@@ -417,10 +442,7 @@ const App: React.FC = () => {
 
       record.synced = syncSuccess ? 1 : 0;
       await db.steelChanges.add(record);
-
-      const newCount = await db.reports.where('synced').equals(0).count() +
-        await db.steelChanges.where('synced').equals(0).count();
-      setPendingCount(newCount);
+      setPendingCount(await getTotalPendingCount());
 
       if (syncSuccess) {
         setSteelChangeData({
@@ -467,7 +489,7 @@ const App: React.FC = () => {
 
       let syncSuccess = false;
       const btn = document.querySelector('.btn-save-measurement');
-      const originalText = btn?.textContent || 'GUARDAR REGISTRO';
+      const originalText = btn?.textContent || 'GUARDAR';
 
       if (isOnline) {
         try {
@@ -482,11 +504,7 @@ const App: React.FC = () => {
 
       record.synced = syncSuccess ? 1 : 0;
       await db.steelMeasurements.add(record);
-
-      const newCount = await db.reports.where('synced').equals(0).count() +
-        await db.steelChanges.where('synced').equals(0).count() +
-        await db.steelMeasurements.where('synced').equals(0).count();
-      setPendingCount(newCount);
+      setPendingCount(await getTotalPendingCount());
 
       if (syncSuccess) {
         setSteelMeasurementData({
@@ -511,7 +529,8 @@ const App: React.FC = () => {
           barraSeguidora4Inferior: 0,
           barraSeguidora5Superior: 0,
           barraSeguidora5Medio: 0,
-          barraSeguidora5Inferior: 0
+          barraSeguidora5Inferior: 0,
+          comentarios: ''
         });
         localStorage.removeItem('draft_steelMeasurementData');
         lastSavedDrafts['draft_steelMeasurementData'] = '';
@@ -610,14 +629,14 @@ const App: React.FC = () => {
 
       let syncSuccess = false;
       const btn = document.querySelector('.btn-save-event');
-      const originalText = btn?.textContent || 'GUARDAR EVENTO';
+      const originalText = btn?.textContent || 'GUARDAR';
 
       let eventToSync = { ...record };
 
       if (isOnline) {
         try {
           if (btn) btn.textContent = 'Sincronizando...';
-          
+
           if (record.photo && record.photo.startsWith('data:image')) {
             const driveUrl = await uploadPhotoToDrive(record.photo);
             if (driveUrl) {
@@ -631,18 +650,13 @@ const App: React.FC = () => {
           const json = await res.json();
           if (json.success) syncSuccess = true;
         } catch (e) {
-           console.error('Error enviando a nube:', e);
+          console.error('Error enviando a nube:', e);
         }
       }
 
       eventToSync.synced = syncSuccess ? 1 : 0;
       await db.events.add(eventToSync);
-
-      const newCount = await db.reports.where('synced').equals(0).count() +
-        await db.steelChanges.where('synced').equals(0).count() +
-        await db.steelMeasurements.where('synced').equals(0).count() +
-        await db.events.where('synced').equals(0).count();
-      setPendingCount(newCount);
+      setPendingCount(await getTotalPendingCount());
 
       if (syncSuccess) {
         setNewEventData({
@@ -656,7 +670,7 @@ const App: React.FC = () => {
         lastSavedDrafts['draft_newEventData'] = '';
         await loadOpenEvents();
         setCurrentPage('eventos');
-        
+
         if (btn) {
           btn.textContent = '¡GUARDADO EN LA NUBE!';
           setTimeout(() => btn.textContent = originalText, 2500);
@@ -855,10 +869,9 @@ const App: React.FC = () => {
   // Descargar último inventario desde Google Sheets
   const downloadLastInventoryFromSheet = async () => {
     try {
-      const response = await fetch(`${GAS_URL}?action=getLastInventory`);
+      const response = await fetch(`${GAS_URL}?action=getLastInventory&t=${Date.now()}`);
       const result = await response.json();
       if (result.success && result.inventory) {
-        console.log('Último inventario descargado desde Excel');
         return result.inventory;
       }
       return null;
@@ -868,73 +881,46 @@ const App: React.FC = () => {
     }
   };
 
-  // Cargar último registro de inventario (con sincronización bidireccional)
+  // Cargar último registro de inventario (siempre desde Excel)
   const loadLastInventory = async () => {
-    // Primero cargar registro local más reciente
-    let localRecord = await db.inventoryRecords.orderBy('createdAt').reverse().first();
-
-    // Si hay conexión, intentar descargar desde Excel
-    if (navigator.onLine) {
-      try {
-        const remoteInventory = await downloadLastInventoryFromSheet();
-        if (remoteInventory) {
-          const remoteDate = new Date(remoteInventory.date).getTime();
-          const localDate = localRecord ? new Date(localRecord.date).getTime() : 0;
-
-          // Si el remoto es más reciente o no hay local, importar y guardar
-          if (remoteDate > localDate || !localRecord) {
-            // Construir el registro para guardar en IndexedDB
-            const inventoryToSave: Omit<InventoryRecord, 'id'> = {
-              date: remoteInventory.date,
-              synced: 1, // Ya viene del Excel, está sincronizado
-              createdAt: remoteInventory.createdAt || Date.now()
-            } as Omit<InventoryRecord, 'id'>;
-
-            // Agregar todos los campos de inventario
-            INVENTORY_CATEGORIES.forEach(cat => {
-              cat.items.forEach(item => {
-                const centralKey = `${item.key}_central` as keyof InventoryRecord;
-                const minaKey = `${item.key}_mina` as keyof InventoryRecord;
-                (inventoryToSave as any)[centralKey] = remoteInventory[centralKey] || 0;
-                (inventoryToSave as any)[minaKey] = remoteInventory[minaKey] || 0;
-              });
-            });
-
-            // Verificar si ya existe un registro con la misma fecha
-            const existingRecord = await db.inventoryRecords.where('date').equals(remoteInventory.date).first();
-            if (!existingRecord) {
-              await db.inventoryRecords.add(inventoryToSave);
-              console.log('Inventario guardado localmente desde Excel:', remoteInventory.date);
-            }
-
-            // Actualizar la referencia local
-            localRecord = await db.inventoryRecords.orderBy('createdAt').reverse().first();
-          }
-        }
-      } catch (error) {
-        console.warn('Error sincronizando inventario desde Excel:', error);
-      }
+    if (!navigator.onLine) {
+      setLastInventoryDate('sin señal');
+      setInventoryData(createEmptyInventory());
+      setInventoryObs({});
+      setOpenSnRow(null);
+      return;
     }
 
-    // Cargar datos del registro local (ya sea descargado o previo)
-    if (localRecord) {
-      setLastInventoryDate(localRecord.date);
-      // Cargar los valores del último registro
-      const newData: Record<string, number> = {};
-      INVENTORY_CATEGORIES.forEach(cat => {
-        cat.items.forEach(item => {
-          const centralKey = `${item.key}_central` as keyof InventoryRecord;
-          const minaKey = `${item.key}_mina` as keyof InventoryRecord;
-          newData[`${item.key}_central`] = (localRecord![centralKey] as number) || 0;
-          newData[`${item.key}_mina`] = (localRecord![minaKey] as number) || 0;
+    try {
+      const remoteInventory = await downloadLastInventoryFromSheet();
+
+      if (remoteInventory) {
+        setLastInventoryDate(remoteInventory.date);
+
+        const newData: Record<string, number> = {};
+        INVENTORY_CATEGORIES.forEach(cat => {
+          cat.items.forEach(item => {
+            const centralKey = `${item.key}_central` as keyof InventoryRecord;
+            const minaKey = `${item.key}_mina` as keyof InventoryRecord;
+
+            // remoteInventory trae los campos desde Excel
+            newData[`${item.key}_central`] = Number(remoteInventory[centralKey]) || 0;
+            newData[`${item.key}_mina`] = Number(remoteInventory[minaKey]) || 0;
+          });
         });
-      });
-      setInventoryData(newData);
-      setInventoryObs(localRecord.observations || {});
-      setOpenSnRow(null);
-      setInventoryDate(localRecord.date); // Precargar la fecha también
-    } else {
-      setLastInventoryDate(null);
+
+        setInventoryData(newData);
+        setInventoryObs(remoteInventory.observations || {});
+        setOpenSnRow(null);
+      } else {
+        setLastInventoryDate(null);
+        setInventoryData(createEmptyInventory());
+        setInventoryObs({});
+        setOpenSnRow(null);
+      }
+    } catch (error) {
+      console.warn('Error obteniendo inventario desde Excel:', error);
+      setLastInventoryDate('sin señal');
       setInventoryData(createEmptyInventory());
       setInventoryObs({});
       setOpenSnRow(null);
@@ -964,15 +950,10 @@ const App: React.FC = () => {
       }
 
       // Actualizar conteo pendiente
-      const newCount = await db.reports.where('synced').equals(0).count() +
-        await db.steelChanges.where('synced').equals(0).count() +
-        await db.steelMeasurements.where('synced').equals(0).count() +
-        await db.events.where('synced').equals(0).count() +
-        await db.inventoryRecords.where('synced').equals(0).count();
-      setPendingCount(newCount);
+      setPendingCount(await getTotalPendingCount());
 
       if (isOnline) {
-        await syncInventoryRecords();
+        await syncData();
       }
 
       setLastInventoryDate(inventoryDate);
@@ -983,43 +964,128 @@ const App: React.FC = () => {
     }
   };
 
-  // Sincronizar registros de inventario
-  const syncInventoryRecords = async () => {
-    const unsynced = await db.inventoryRecords.where('synced').equals(0).toArray();
-    if (unsynced.length === 0) return;
 
-    for (const record of unsynced) {
-      try {
-        const iframe = document.createElement('iframe');
-        iframe.name = 'sync_inventory_' + Date.now();
-        iframe.style.display = 'none';
-        document.body.appendChild(iframe);
 
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.action = GAS_URL;
-        form.target = iframe.name;
-
-        const input = document.createElement('input');
-        input.type = 'hidden';
-        input.name = 'inventoryRecord';
-        input.value = JSON.stringify(record);
-        form.appendChild(input);
-
-        document.body.appendChild(form);
-        form.submit();
-
-        setTimeout(() => {
-          document.body.removeChild(form);
-          document.body.removeChild(iframe);
-        }, 5000);
-
-        await db.inventoryRecords.update(record.id!, { synced: 1 });
-        console.log('Inventario sincronizado:', record.id);
-      } catch (error) {
-        console.error('Error sincronizando inventario:', error);
-      }
+  // Generar PDF del inventario actual en pantalla
+  const generateInventoryPDF = async () => {
+    // Tomamos la fecha actual en la que esté seteado el calendario
+    if (!inventoryDate && !lastInventoryDate) {
+      alert('No hay una fecha de inventario definida para el reporte.');
+      return;
     }
+
+    const logoDrillcoData = await loadImageForPDF('/drillco.png');
+    const logoLomasBayasData = await loadImageForPDF('/lomasbayas.png');
+
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+
+    // --- Header background ---
+    doc.setFillColor(20, 30, 48);
+    doc.rect(0, 0, pageWidth, 32, 'F');
+
+    // Accent line
+    doc.setFillColor(0, 122, 255);
+    doc.rect(0, 32, pageWidth, 1.5, 'F');
+
+    // Title centered
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    doc.setFont('helvetica', 'bold');
+    doc.text('REPORTE DE INVENTARIO', pageWidth / 2, 14, { align: 'center' });
+
+    // Subtitle centered
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    doc.text('Área Técnica - Drillco', pageWidth / 2, 20, { align: 'center' });
+
+    // Date / info centered
+    const reportDate = (lastInventoryDate || inventoryDate).split('-').reverse().join('/');
+    doc.setFontSize(9);
+    doc.text(`Fecha registro: ${reportDate}  |  Generado: ${new Date().toLocaleDateString('es-CL')}`, pageWidth / 2, 26, { align: 'center' });
+
+    // Draw Logos left and right maintaining aspect ratio
+    const logoHeight = 14;
+    if (logoDrillcoData) {
+      const w = (logoDrillcoData.width / logoDrillcoData.height) * logoHeight;
+      doc.addImage(logoDrillcoData.data, 'PNG', 14, 8, w, logoHeight);
+    }
+    if (logoLomasBayasData) {
+      const w = (logoLomasBayasData.width / logoLomasBayasData.height) * logoHeight;
+      doc.addImage(logoLomasBayasData.data, 'PNG', pageWidth - 14 - w, 8, w, logoHeight);
+    }
+
+    // --- Build table data ---
+    const tableBody: any[] = [];
+
+    INVENTORY_CATEGORIES.forEach((category) => {
+      category.items.forEach((item, idx) => {
+        const centralKey = `${item.key}_central`;
+        const minaKey = `${item.key}_mina`;
+        const centralVal = (inventoryData[centralKey] as number) || 0;
+        const minaVal = (inventoryData[minaKey] as number) || 0;
+        const total = centralVal + minaVal;
+
+        tableBody.push([
+          idx === 0 ? { content: category.name, rowSpan: category.items.length, styles: { fontStyle: 'bold', fillColor: [235, 240, 250], valign: 'middle', cellWidth: 42 } } : null,
+          item.name,
+          item.sap,
+          { content: centralVal.toString(), styles: { halign: 'center' } },
+          { content: minaVal.toString(), styles: { halign: 'center' } },
+          { content: total.toString(), styles: { halign: 'center', fontStyle: 'bold' } }
+        ].filter(cell => cell !== null));
+      });
+    });
+
+    // --- Draw table ---
+    autoTable(doc, {
+      head: [[
+        { content: 'Categoría', styles: { halign: 'center' } },
+        { content: 'Item', styles: { halign: 'left' } },
+        { content: 'N° SAP', styles: { halign: 'center' } },
+        { content: 'Bod. Central', styles: { halign: 'center' } },
+        { content: 'Bod. Mina', styles: { halign: 'center' } },
+        { content: 'Total', styles: { halign: 'center' } }
+      ]],
+      body: tableBody,
+      startY: 38,
+      theme: 'grid',
+      styles: {
+        fontSize: 8,
+        cellPadding: 2.5,
+        lineColor: [200, 200, 200],
+        lineWidth: 0.2,
+      },
+      headStyles: {
+        fillColor: [0, 122, 255],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 9,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 250, 253]
+      },
+      columnStyles: {
+        0: { cellWidth: 42 },
+        1: { cellWidth: 'auto' },
+        2: { cellWidth: 24, halign: 'center' },
+        3: { cellWidth: 28, halign: 'center' },
+        4: { cellWidth: 28, halign: 'center' },
+        5: { cellWidth: 24, halign: 'center' },
+      },
+      didDrawPage: () => {
+        // Footer
+        doc.setFontSize(7);
+        doc.setTextColor(150, 150, 150);
+        doc.text('Drillco • Lomas Bayas • Reporte generado automáticamente', 14, pageHeight - 6);
+        doc.text(`Página ${doc.getNumberOfPages()}`, pageWidth - 14, pageHeight - 6, { align: 'right' });
+      }
+    });
+
+    // Save locally
+    const fileName = `Inventario_${lastInventoryDate || inventoryDate}.pdf`;
+    doc.save(fileName);
   };
 
   // Resetear formulario de descarte
@@ -1060,7 +1126,7 @@ const App: React.FC = () => {
 
       let syncSuccess = false;
       const btn = document.querySelector('.btn-save-discard');
-      const originalText = btn?.textContent || 'GUARDAR DESCARTE';
+      const originalText = btn?.textContent || 'GUARDAR';
 
       let dataToSync = { ...record };
 
@@ -1079,6 +1145,7 @@ const App: React.FC = () => {
 
       dataToSync.synced = syncSuccess ? 1 : 0;
       await db.steelDiscards.add(dataToSync);
+      setPendingCount(await getTotalPendingCount());
 
       if (syncSuccess) {
         resetDiscardForm();
@@ -1149,7 +1216,7 @@ const App: React.FC = () => {
     reader.readAsDataURL(file);
   };
 
-  const hasDraftReport = 
+  const hasDraftReport =
     reportData.drillNumber !== '' ||
     reportData.operator !== '' ||
     reportData.bench !== '' ||
@@ -1159,11 +1226,16 @@ const App: React.FC = () => {
     reportData.triconeModel !== '' ||
     reportData.triconeSerial !== '' ||
     wells.length > 0;
-    
+
   const hasDraftSteel = steelChangeData.drillNumber || steelChangeData.serialNumber || steelChangeData.comments;
   const hasDraftMeasurement = steelMeasurementData.drillNumber || steelMeasurementData.adaptadorInferiorMedio > 0 || steelMeasurementData.barraPateraSuperior > 0;
   const hasDraftEvent = newEventData.title || newEventData.description || newEventData.responsible;
   const hasDraftDiscard = discardData.serie || discardData.equipo || discardData.causaDescarte;
+
+  // Date range limits: current year ±5
+  const currentYear = new Date().getFullYear();
+  const minDate = `${currentYear - 5}-01-01`;
+  const maxDate = `${currentYear + 5}-12-31`;
 
   return (
     <div>
@@ -1177,8 +1249,7 @@ const App: React.FC = () => {
           <button
             onClick={async () => {
               await syncData();
-              const count = await db.reports.where('synced').equals(0).count();
-              setPendingCount(count);
+              setPendingCount(await getTotalPendingCount());
             }}
             style={{ marginLeft: '10px', padding: '2px 8px', fontSize: '12px', cursor: 'pointer' }}
           >
@@ -1189,14 +1260,14 @@ const App: React.FC = () => {
 
       <header className="header">
         <div className="logo-container">
-          <img src="/drillco-logo.png" alt="Drillco" onError={(e) => (e.currentTarget.style.display = 'none')} />
+          <img src="/drillco.png" alt="Drillco" style={{ objectFit: 'contain' }} onError={(e) => (e.currentTarget.style.display = 'none')} />
         </div>
         <div className="brand-title">
           <h1>ÁREA TÉCNICA</h1>
           <p>Lomas Bayas</p>
         </div>
         <div className="logo-container">
-          <img src="/codelco-logo.png" alt="Codelco" onError={(e) => (e.currentTarget.style.display = 'none')} />
+          <img src="/lomasbayas.png" alt="Lomas Bayas" style={{ objectFit: 'contain' }} onError={(e) => (e.currentTarget.style.display = 'none')} />
         </div>
       </header>
 
@@ -1212,7 +1283,7 @@ const App: React.FC = () => {
             <div className="form-grid">
               <div className="form-group">
                 <label>Fecha</label>
-                <input type="date" value={reportData.date} onChange={(e) => setReportData({ ...reportData, date: e.target.value })} />
+                <input type="date" min={minDate} max={maxDate} value={reportData.date} onChange={(e) => setReportData({ ...reportData, date: e.target.value })} />
               </div>
               <div className="form-group">
                 <label>Turno</label>
@@ -1281,7 +1352,7 @@ const App: React.FC = () => {
                 <label>Diámetro</label>
                 <select value={reportData.triconeDiameter} onChange={(e) => setReportData({ ...reportData, triconeDiameter: e.target.value })}>
                   <option>10 5/8"</option>
-                  <option>7 7/8"</option>
+                  <option>6 1/2"</option>
                 </select>
               </div>
             </div>
@@ -1450,7 +1521,7 @@ const App: React.FC = () => {
 
           <button className={`btn-save ${hasDraftReport ? 'pulse-red' : ''}`} onClick={handleSave}>
             <Save size={24} />
-            GUARDAR REGISTRO
+            GUARDAR
           </button>
         </main>
       )}
@@ -1475,6 +1546,8 @@ const App: React.FC = () => {
             </div>
             <input
               type="date"
+              min={minDate}
+              max={maxDate}
               value={steelChangeData.date}
               onChange={(e) => setSteelChangeData({ ...steelChangeData, date: e.target.value })}
             />
@@ -1490,7 +1563,19 @@ const App: React.FC = () => {
                 <label>Perforadora</label>
                 <select
                   value={steelChangeData.drillNumber}
-                  onChange={(e) => setSteelChangeData({ ...steelChangeData, drillNumber: e.target.value })}
+                  onChange={(e) => {
+                    const newDrill = e.target.value;
+                    const isBitDrill = ['8', '11', '14'].includes(newDrill);
+                    const currentComponent = steelChangeData.component;
+                    // Auto-correct Tricono/Bit based on drill type
+                    let updatedComponent = currentComponent;
+                    if (currentComponent === 'Tricono' && isBitDrill) {
+                      updatedComponent = 'Bit';
+                    } else if (currentComponent === 'Bit' && !isBitDrill) {
+                      updatedComponent = 'Tricono';
+                    }
+                    setSteelChangeData({ ...steelChangeData, drillNumber: newDrill, component: updatedComponent });
+                  }}
                 >
                   <option value="">Seleccionar...</option>
                   <option value="5">5</option>
@@ -1531,7 +1616,11 @@ const App: React.FC = () => {
               <option value="Barra Patera">Barra Patera</option>
               <option value="Adaptador inferior">Adaptador inferior</option>
               <option value="Anillo Guia">Anillo Guia</option>
-              <option value="Tricono">Tricono</option>
+              {['8', '11', '14'].includes(steelChangeData.drillNumber) ? (
+                <option value="Bit">Bit</option>
+              ) : (
+                <option value="Tricono">Tricono</option>
+              )}
             </select>
           </section>
 
@@ -1575,7 +1664,7 @@ const App: React.FC = () => {
               style={{ flex: 2 }}
             >
               <Save size={24} />
-              GUARDAR REGISTRO
+              GUARDAR
             </button>
           </div>
         </main>
@@ -1605,6 +1694,8 @@ const App: React.FC = () => {
                 <label>FECHA</label>
                 <input
                   type="date"
+                  min={minDate}
+                  max={maxDate}
                   value={steelMeasurementData.date}
                   onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, date: e.target.value })}
                 />
@@ -1787,6 +1878,19 @@ const App: React.FC = () => {
             );
           })}
 
+          <section className="card">
+            <div className="card-title">
+              <FileText size={20} />
+              <span>COMENTARIOS</span>
+            </div>
+            <textarea
+              placeholder="Motivo del registro, observaciones, etc."
+              value={steelMeasurementData.comentarios}
+              onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, comentarios: e.target.value })}
+              rows={3}
+            />
+          </section>
+
           <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
             <button
               className="btn-add"
@@ -1801,7 +1905,7 @@ const App: React.FC = () => {
               style={{ flex: 2 }}
             >
               <Save size={24} />
-              GUARDAR MEDICIONES
+              GUARDAR
             </button>
           </div>
         </main>
@@ -1982,6 +2086,8 @@ const App: React.FC = () => {
             </div>
             <input
               type="date"
+              min={minDate}
+              max={maxDate}
               value={newEventData.date}
               onChange={(e) => setNewEventData({ ...newEventData, date: e.target.value })}
             />
@@ -2099,7 +2205,7 @@ const App: React.FC = () => {
               style={{ flex: 2 }}
             >
               <Save size={24} />
-              GUARDAR EVENTO
+              GUARDAR
             </button>
           </div>
         </main>
@@ -2217,15 +2323,38 @@ const App: React.FC = () => {
               </div>
               <input
                 type="date"
+                min={minDate}
+                max={maxDate}
                 value={inventoryDate}
                 onChange={(e) => setInventoryDate(e.target.value)}
                 style={{ padding: '0.25rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border)' }}
               />
             </div>
             {lastInventoryDate && (
-              <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', marginTop: '0.5rem' }}>
-                Último registro: {new Date(lastInventoryDate).toLocaleDateString('es-CL')}
-              </p>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '0.5rem' }}>
+                <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
+                  Último registro: {lastInventoryDate.split('-').reverse().join('-')}
+                </p>
+                <button
+                  onClick={generateInventoryPDF}
+                  style={{
+                    background: 'none',
+                    border: '1.5px solid var(--success)',
+                    color: 'var(--success)',
+                    borderRadius: '6px',
+                    padding: '4px 10px',
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <FileText size={14} />
+                  PDF
+                </button>
+              </div>
             )}
           </section>
 
@@ -2398,17 +2527,17 @@ const App: React.FC = () => {
                               <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#856404' }}>
                                 Observaciones / N° Serie para {item.name}:
                               </label>
-                              <input 
-                                type="text" 
-                                placeholder="Ingrese números de serie u observaciones..." 
+                              <input
+                                type="text"
+                                placeholder="Ingrese números de serie u observaciones..."
                                 value={inventoryObs[item.key] || ''}
                                 onChange={(e) => setInventoryObs({ ...inventoryObs, [item.key]: e.target.value })}
-                                style={{ 
-                                  width: '100%', 
-                                  padding: '0.4rem', 
-                                  border: '1px solid #ffe066', 
-                                  borderRadius: '4px', 
-                                  fontSize: '0.85rem' 
+                                style={{
+                                  width: '100%',
+                                  padding: '0.4rem',
+                                  border: '1px solid #ffe066',
+                                  borderRadius: '4px',
+                                  fontSize: '0.85rem'
                                 }}
                               />
                             </div>
@@ -2436,7 +2565,7 @@ const App: React.FC = () => {
               style={{ flex: 2 }}
             >
               <Save size={24} />
-              ACTUALIZAR STOCK
+              GUARDAR
             </button>
           </div>
         </main>
@@ -2456,6 +2585,8 @@ const App: React.FC = () => {
                 <label>Fecha</label>
                 <input
                   type="date"
+                  min={minDate}
+                  max={maxDate}
                   value={discardData.date}
                   onChange={(e) => setDiscardData({ ...discardData, date: e.target.value })}
                 />
@@ -2491,6 +2622,8 @@ const App: React.FC = () => {
                 <label>Fecha de Postura</label>
                 <input
                   type="date"
+                  min={minDate}
+                  max={maxDate}
                   value={discardData.fechaPostura}
                   onChange={(e) => setDiscardData({ ...discardData, fechaPostura: e.target.value })}
                 />
@@ -2499,6 +2632,8 @@ const App: React.FC = () => {
                 <label>Fecha de Descarte</label>
                 <input
                   type="date"
+                  min={minDate}
+                  max={maxDate}
                   value={discardData.fechaDescarte}
                   onChange={(e) => setDiscardData({ ...discardData, fechaDescarte: e.target.value })}
                 />
@@ -2603,12 +2738,12 @@ const App: React.FC = () => {
                     </div>
                     <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
                       <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <Camera size={14} style={{ marginRight: '4px' }}/> Cámara
-                         <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoSerie')} style={{ display: 'none' }} />
+                        <Camera size={14} style={{ marginRight: '4px' }} /> Cámara
+                        <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoSerie')} style={{ display: 'none' }} />
                       </label>
                       <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <ImageIcon size={14} style={{ marginRight: '4px' }}/> Galería
-                         <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoSerie')} style={{ display: 'none' }} />
+                        <ImageIcon size={14} style={{ marginRight: '4px' }} /> Galería
+                        <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoSerie')} style={{ display: 'none' }} />
                       </label>
                     </div>
                   </div>
@@ -2619,12 +2754,12 @@ const App: React.FC = () => {
                     </div>
                     <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
                       <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <Camera size={14} style={{ marginRight: '4px' }}/> Cámara
-                         <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoCuerpo')} style={{ display: 'none' }} />
+                        <Camera size={14} style={{ marginRight: '4px' }} /> Cámara
+                        <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoCuerpo')} style={{ display: 'none' }} />
                       </label>
                       <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <ImageIcon size={14} style={{ marginRight: '4px' }}/> Galería
-                         <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoCuerpo')} style={{ display: 'none' }} />
+                        <ImageIcon size={14} style={{ marginRight: '4px' }} /> Galería
+                        <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoCuerpo')} style={{ display: 'none' }} />
                       </label>
                     </div>
                   </div>
@@ -2632,20 +2767,20 @@ const App: React.FC = () => {
               )}
               {discardData.tipoAcero === 'Bit' && (
                 <div className="form-group">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <label>Foto Botones</label>
-                      {discardData.fotoBotones && <span style={{ fontSize: '0.7rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ LISTA</span>}
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
-                      <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <Camera size={14} style={{ marginRight: '4px' }}/> Cámara
-                         <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoBotones')} style={{ display: 'none' }} />
-                      </label>
-                      <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                         <ImageIcon size={14} style={{ marginRight: '4px' }}/> Galería
-                         <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoBotones')} style={{ display: 'none' }} />
-                      </label>
-                    </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label>Foto Botones</label>
+                    {discardData.fotoBotones && <span style={{ fontSize: '0.7rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ LISTA</span>}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
+                    <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Camera size={14} style={{ marginRight: '4px' }} /> Cámara
+                      <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange('fotoBotones')} style={{ display: 'none' }} />
+                    </label>
+                    <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <ImageIcon size={14} style={{ marginRight: '4px' }} /> Galería
+                      <input type="file" accept="image/*" onChange={handleDiscardPhotoChange('fotoBotones')} style={{ display: 'none' }} />
+                    </label>
+                  </div>
                 </div>
               )}
 
@@ -2670,12 +2805,12 @@ const App: React.FC = () => {
                       </div>
                       <div style={{ display: 'flex', gap: '8px', marginTop: '0.3rem' }}>
                         <label style={{ flex: 1, padding: '6px', background: 'var(--primary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                           <Camera size={14} style={{ marginRight: '4px' }}/> Cámara
-                           <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange(item.key)} style={{ display: 'none' }} />
+                          <Camera size={14} style={{ marginRight: '4px' }} /> Cámara
+                          <input type="file" accept="image/*" capture="environment" onChange={handleDiscardPhotoChange(item.key)} style={{ display: 'none' }} />
                         </label>
                         <label style={{ flex: 1, padding: '6px', background: 'var(--secondary)', color: 'white', borderRadius: '4px', textAlign: 'center', cursor: 'pointer', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                           <ImageIcon size={14} style={{ marginRight: '4px' }}/> Galería
-                           <input type="file" accept="image/*" onChange={handleDiscardPhotoChange(item.key)} style={{ display: 'none' }} />
+                          <ImageIcon size={14} style={{ marginRight: '4px' }} /> Galería
+                          <input type="file" accept="image/*" onChange={handleDiscardPhotoChange(item.key)} style={{ display: 'none' }} />
                         </label>
                       </div>
                       <input
@@ -2708,7 +2843,7 @@ const App: React.FC = () => {
               disabled={uploadingDiscardPhoto}
             >
               <Save size={24} />
-              {uploadingDiscardPhoto ? 'SUBIENDO...' : 'GUARDAR REGISTRO'}
+              {uploadingDiscardPhoto ? 'SUBIENDO...' : 'GUARDAR'}
             </button>
           </div>
         </main>

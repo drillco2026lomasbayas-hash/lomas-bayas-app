@@ -130,18 +130,58 @@ function getLastInventoryFromSheet(ss) {
     const data = sheet.getDataRange().getValues();
     if (data.length <= 1) return null; // Solo encabezados
 
-    // Obtener la fila de cantidades (ignorar fila de observaciones si es la última)
-    let lastQtyRow = data[data.length - 1];
+    // Encontrar la fila de encabezados correcta (la primera fila que tenga elementos en la columna 3 (índice 2) en adelante)
+    let headerRowIdx = 0;
+    while (headerRowIdx < data.length && (!data[headerRowIdx][2] || String(data[headerRowIdx][2]).trim() === '')) {
+        headerRowIdx++;
+    }
+
+    if (headerRowIdx >= data.length) return null; // No se encontraron encabezados válidos
+    const headers = data[headerRowIdx];
+
+    // Buscar la última fila válida (ignorando las que estén complemente vacías)
+    let lastValidIdx = data.length - 1;
+    while (lastValidIdx > headerRowIdx && 
+           String(data[lastValidIdx][0]).trim() === '' && 
+           String(data[lastValidIdx][1]).trim() === '') {
+        lastValidIdx--;
+    }
+
+    if (lastValidIdx <= headerRowIdx) return null;
+
+    let lastQtyRow = data[lastValidIdx];
     let obsRow = null;
 
-    if (lastQtyRow[1] === 'OBSERVACIONES / SN' && data.length > 2) {
+    // Verificar si la última fila es de observaciones
+    if (String(lastQtyRow[1]).trim() === 'OBSERVACIONES / SN' && lastValidIdx > headerRowIdx) {
         obsRow = lastQtyRow;
-        lastQtyRow = data[data.length - 2];
+        lastQtyRow = data[lastValidIdx - 1]; // La fila anterior debiera ser la de cantidades
     }
-    const headers = data[0];
+
+    let createdAtVal = lastQtyRow[1];
+    let newDateStr = lastQtyRow[0]; // Fallback a Columna A si falla
+    
+    try {
+        if (createdAtVal instanceof Date) {
+            newDateStr = Utilities.formatDate(createdAtVal, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd");
+        } else if (typeof createdAtVal === 'string') {
+            const match = createdAtVal.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+            if (match) {
+                let d = match[1].padStart(2, '0');
+                let m = match[2].padStart(2, '0');
+                let y = match[3];
+                newDateStr = y + '-' + m + '-' + d;
+            } else {
+                let d = new Date(createdAtVal);
+                if (!isNaN(d.getTime())) {
+                    newDateStr = Utilities.formatDate(d, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd");
+                }
+            }
+        }
+    } catch(e) {}
 
     const inventory = {
-        date: lastQtyRow[0],
+        date: newDateStr, // Fecha tomada desde la Columna A o Parseada
         synced: 1,
         createdAt: new Date(lastQtyRow[1]).getTime() || Date.now(),
         observations: {}
@@ -150,14 +190,18 @@ function getLastInventoryFromSheet(ss) {
     // Mapear los valores dinámicos
     for (let i = 2; i < headers.length; i++) {
         if (headers[i]) {
-            if (lastQtyRow[i] !== undefined) {
+            if (lastQtyRow[i] !== undefined && lastQtyRow[i] !== '') {
                 // Intentar convertir el header a una clave válida
                 inventory[headers[i]] = lastQtyRow[i];
             }
-            if (obsRow && obsRow[i] !== undefined && typeof obsRow[i] === 'string' && obsRow[i].trim() !== '') {
-                if (headers[i].endsWith('_central')) {
-                    const baseKey = headers[i].replace('_central', '');
-                    inventory.observations[baseKey] = obsRow[i];
+            if (obsRow && obsRow[i] !== undefined) {
+                let obsVal = String(obsRow[i]).trim();
+                // Omitimos validaciones en blanco para permitir vacíos en observaciones, pero almacenamos los válidos
+                if (obsVal !== '') {
+                    if (headers[i].endsWith('_central')) {
+                        const baseKey = headers[i].replace('_central', '');
+                        inventory.observations[baseKey] = obsVal;
+                    }
                 }
             }
         }
@@ -345,9 +389,9 @@ function saveSteelMeasurement(ss, data) {
             'Seg.3 Sup', 'Seg.3 Med', 'Seg.3 Inf',
             'Seg.4 Sup', 'Seg.4 Med', 'Seg.4 Inf',
             'Seg.5 Sup', 'Seg.5 Med', 'Seg.5 Inf',
-            'Fecha Creación'
+            'Comentarios', 'Fecha Creación'
         ]);
-        sheet.getRange(1, 1, 1, 24).setFontWeight('bold').setBackground('#4A90D9').setFontColor('white');
+        sheet.getRange(1, 1, 1, 25).setFontWeight('bold').setBackground('#4A90D9').setFontColor('white');
         sheet.setFrozenRows(1);
     }
 
@@ -375,6 +419,7 @@ function saveSteelMeasurement(ss, data) {
         data.barraSeguidora5Superior || 0,
         data.barraSeguidora5Medio || 0,
         data.barraSeguidora5Inferior || 0,
+        data.comentarios || '',
         new Date(data.createdAt).toLocaleString('es-CL')
     ]);
 }
