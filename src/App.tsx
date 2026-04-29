@@ -1408,6 +1408,7 @@ const App: React.FC = () => {
                     <label style={{ color: 'var(--secondary)' }}>Metros</label>
                     <input
                       type="number"
+                      onFocus={(e) => e.target.select()}
                       value={item.meters}
                       onChange={(e) => updateWell(index, 'meters', parseFloat(e.target.value))}
                       style={{ borderColor: 'var(--secondary)', background: '#f0f7ff' }}
@@ -1751,6 +1752,7 @@ const App: React.FC = () => {
               <label>MEDIO (PULG)</label>
               <input
                 type="number"
+                      onFocus={(e) => e.target.select()}
                 step="0.1"
                 value={steelMeasurementData.adaptadorInferiorMedio}
                 onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, adaptadorInferiorMedio: parseFloat(e.target.value) || 0 })}
@@ -1780,6 +1782,7 @@ const App: React.FC = () => {
                 <label>SUPERIOR (PULG)</label>
                 <input
                   type="number"
+                      onFocus={(e) => e.target.select()}
                   step="0.1"
                   value={steelMeasurementData.barraPateraSuperior}
                   onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraSuperior: parseFloat(e.target.value) || 0 })}
@@ -1789,6 +1792,7 @@ const App: React.FC = () => {
                 <label>MEDIO (PULG)</label>
                 <input
                   type="number"
+                      onFocus={(e) => e.target.select()}
                   step="0.1"
                   value={steelMeasurementData.barraPateraMedio}
                   onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraMedio: parseFloat(e.target.value) || 0 })}
@@ -1798,6 +1802,7 @@ const App: React.FC = () => {
                 <label style={{ color: 'var(--danger)' }}>INFERIOR (PULG)</label>
                 <input
                   type="number"
+                      onFocus={(e) => e.target.select()}
                   step="0.1"
                   value={steelMeasurementData.barraPateraInferior}
                   onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraInferior: parseFloat(e.target.value) || 0 })}
@@ -1841,6 +1846,7 @@ const App: React.FC = () => {
                     <label>SUPERIOR (PULG)</label>
                     <input
                       type="number"
+                      onFocus={(e) => e.target.select()}
                       step="0.1"
                       value={steelMeasurementData[supKey] as number}
                       onChange={(e) => setSteelMeasurementData({
@@ -1853,6 +1859,7 @@ const App: React.FC = () => {
                     <label>MEDIO (PULG)</label>
                     <input
                       type="number"
+                      onFocus={(e) => e.target.select()}
                       step="0.1"
                       value={steelMeasurementData[medKey] as number}
                       onChange={(e) => setSteelMeasurementData({
@@ -1865,6 +1872,7 @@ const App: React.FC = () => {
                     <label>INFERIOR (PULG)</label>
                     <input
                       type="number"
+                      onFocus={(e) => e.target.select()}
                       step="0.1"
                       value={steelMeasurementData[infKey] as number}
                       onChange={(e) => setSteelMeasurementData({
@@ -2416,6 +2424,7 @@ const App: React.FC = () => {
                             >−</button>
                             <input
                               type="number"
+                      onFocus={(e) => e.target.select()}
                               min="0"
                               value={inventoryData[`${item.key}_central`] || 0}
                               onChange={(e) => setInventoryData({
@@ -2487,6 +2496,7 @@ const App: React.FC = () => {
                             >−</button>
                             <input
                               type="number"
+                      onFocus={(e) => e.target.select()}
                               min="0"
                               value={inventoryData[`${item.key}_mina`] || 0}
                               onChange={(e) => setInventoryData({
@@ -2664,6 +2674,7 @@ const App: React.FC = () => {
                 <label>Metros</label>
                 <input
                   type="number"
+                      onFocus={(e) => e.target.select()}
                   value={discardData.metros}
                   onChange={(e) => setDiscardData({ ...discardData, metros: parseInt(e.target.value) || 0 })}
                 />
