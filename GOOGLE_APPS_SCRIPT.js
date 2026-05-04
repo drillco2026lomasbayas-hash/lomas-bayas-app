@@ -12,10 +12,6 @@
  * 6. Copia la URL y pégala en GAS_URL de App.tsx
  */
 
-// ID de la carpeta en Google Drive donde se guardarán las fotos
-// Crea una carpeta en Drive y pega su ID aquí (lo encuentras en la URL de la carpeta)
-const DRIVE_FOLDER_ID = 'TU_ID_DE_CARPETA_AQUI'; // Ejemplo: '1ABC123def456GHI789'
-
 function doPost(e) {
     try {
         const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -214,7 +210,10 @@ function getLastInventoryFromSheet(ss) {
  * Sube una foto a Google Drive y devuelve la URL pública
  */
 function uploadPhotoToDrive(photoData) {
-    const folder = DriveApp.getFolderById(DRIVE_FOLDER_ID);
+    // Buscar o crear automáticamente la carpeta para las fotos
+    const folderName = "LomasBayas_Fotos";
+    const folders = DriveApp.getFoldersByName(folderName);
+    const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder(folderName);
 
     // Decodificar base64
     const base64Data = photoData.base64.split(',')[1]; // Quitar el prefijo "data:image/..."
