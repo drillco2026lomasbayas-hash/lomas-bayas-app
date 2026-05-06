@@ -20,6 +20,50 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './index.css';
 
+// Utilidad para comprimir imágenes y reducir su peso a ~1MB o menos
+const compressImage = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = (event) => {
+      const img = new Image();
+      img.src = event.target?.result as string;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        
+        const MAX_WIDTH = 1280;
+        const MAX_HEIGHT = 1280;
+
+        if (width > height) {
+          if (width > MAX_WIDTH) {
+            height *= MAX_WIDTH / width;
+            width = MAX_WIDTH;
+          }
+        } else {
+          if (height > MAX_HEIGHT) {
+            width *= MAX_HEIGHT / height;
+            height = MAX_HEIGHT;
+          }
+        }
+
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return resolve(event.target?.result as string);
+        
+        ctx.drawImage(img, 0, 0, width, height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+        resolve(dataUrl);
+      };
+      img.onerror = (e) => reject(e);
+    };
+    reader.onerror = (e) => reject(e);
+  });
+};
+
+
 // Utilidad para cargar una imagen desde public/ como Base64 para usarla en jsPDF
 export const loadImageForPDF = async (url: string): Promise<{ data: string, width: number, height: number } | null> => {
   try {
@@ -818,9 +862,8 @@ const App: React.FC = () => {
     if (!file) return;
 
     // Leer como base64 primero
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64Data = reader.result as string;
+    try {
+      const base64Data = await compressImage(file);
 
       if (isOnline) {
         // Subir a Google Drive
@@ -862,8 +905,9 @@ const App: React.FC = () => {
         setNewEventData({ ...newEventData, photo: base64Data });
         console.log('Sin conexión: foto guardada localmente');
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Error al comprimir la foto:", err);
+    }
   };
 
   // Descargar último inventario desde Google Sheets
@@ -1175,9 +1219,8 @@ const App: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64Data = reader.result as string;
+    try {
+      const base64Data = await compressImage(file);
 
       if (isOnline) {
         setUploadingDiscardPhoto(true);
@@ -1212,8 +1255,9 @@ const App: React.FC = () => {
       } else {
         setDiscardData(prev => ({ ...prev, [fieldName]: base64Data }));
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Error al comprimir la foto:", err);
+    }
   };
 
   const hasDraftReport =
