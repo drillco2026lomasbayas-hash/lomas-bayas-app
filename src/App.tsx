@@ -20,6 +20,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './index.css';
 import DrillReportModal from './DrillReportModal';
+import { ChecklistPage } from './ChecklistPage';
 
 // Utilidad para comprimir imágenes y reducir su peso a ~1MB o menos
 const compressImage = (file: File): Promise<string> => {
@@ -103,7 +104,7 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : [];
   });
   const [pendingCount, setPendingCount] = useState(0);
-  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros'>('reporte');
+  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros' | 'checklist'>('reporte');
 
   // Estado para Control de Diámetros
   type ComponentMeasurements = { pin?: number; centro?: number; box?: number };
@@ -257,7 +258,8 @@ const App: React.FC = () => {
       await db.steelMeasurements.where('synced').equals(0).count() +
       await db.events.where('synced').equals(0).count() +
       await db.inventoryRecords.where('synced').equals(0).count() +
-      await db.steelDiscards.where('synced').equals(0).count();
+      await db.steelDiscards.where('synced').equals(0).count() +
+      await db.checklists.where('synced').equals(0).count();
   };
 
   // Cargar cantidad de registros pendientes y configurar listeners de conexión
@@ -443,7 +445,7 @@ const App: React.FC = () => {
     }
 
     // Helper para sincronizar registros de cualquier tabla
-    const syncTable = async (table: typeof db.reports | typeof db.steelChanges | typeof db.steelMeasurements | typeof db.events | typeof db.inventoryRecords | typeof db.steelDiscards, fieldName: string) => {
+    const syncTable = async (table: typeof db.reports | typeof db.steelChanges | typeof db.steelMeasurements | typeof db.events | typeof db.inventoryRecords | typeof db.steelDiscards | typeof db.checklists, fieldName: string) => {
       const unsynced = await (table as any).where('synced').equals(0).toArray();
       if (unsynced.length === 0) return;
       console.log(`${fieldName}: ${unsynced.length} pendiente(s)`);
@@ -471,6 +473,7 @@ const App: React.FC = () => {
     await syncTable(db.events, 'event');
     await syncTable(db.inventoryRecords, 'inventoryRecord');
     await syncTable(db.steelDiscards, 'steelDiscard');
+    await syncTable(db.checklists, 'checklist');
   };
 
   // Guardar Cambio de Aceros
@@ -2407,6 +2410,26 @@ const App: React.FC = () => {
               </p>
             </section>
 
+            {/* Checklist de Equipos */}
+            <section
+              className="card"
+              onClick={() => setCurrentPage('checklist')}
+              style={{ cursor: 'pointer', textAlign: 'center' }}>
+              <div style={{
+                background: 'rgba(23, 162, 184, 0.1)',
+                borderRadius: '12px',
+                padding: '1rem',
+                display: 'inline-block',
+                marginBottom: '0.5rem'
+              }}>
+                <ClipboardList size={32} style={{ color: '#17a2b8' }} />
+              </div>
+              <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem' }}>Checklist de Equipos</h3>
+              <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
+                Inspección diaria de perforadoras
+              </p>
+            </section>
+
             {/* Estadística de Aceros */}
             <section className="card" style={{ cursor: 'pointer', textAlign: 'center', opacity: 0.6 }}>
               <div style={{
@@ -2695,6 +2718,15 @@ const App: React.FC = () => {
           </div>
         </main>
       )}
+
+      {/* Página Checklist */}
+      {currentPage === 'checklist' && <ChecklistPage 
+        gasUrl={GAS_URL}
+        isOnline={isOnline}
+        onSave={() => {
+          getTotalPendingCount().then(setPendingCount);
+        }} 
+      />}
 
       {/* Página Descarte de Aceros */}
       {currentPage === 'descarteAceros' && (

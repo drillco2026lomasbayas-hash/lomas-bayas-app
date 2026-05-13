@@ -53,6 +53,10 @@ function doPost(e) {
             // Descarte de aceros
             const data = JSON.parse(e.parameter.steelDiscard);
             saveSteelDiscard(ss, data);
+        } else if (e.parameter.checklist) {
+            // Checklist de Equipos
+            const data = JSON.parse(e.parameter.checklist);
+            saveChecklist(ss, data);
         }
 
         return ContentService.createTextOutput(JSON.stringify({ success: true }))
@@ -82,6 +86,11 @@ function doGet(e) {
             // Obtener las últimas mediciones de aceros por perforadora
             const measurements = getLastSteelMeasurements(ss);
             return ContentService.createTextOutput(JSON.stringify({ success: true, measurements: measurements }))
+                .setMimeType(ContentService.MimeType.JSON);
+        } else if (action === 'getChecklists') {
+            // Obtener últimos checklists
+            const checklists = getLatestChecklists(ss);
+            return ContentService.createTextOutput(JSON.stringify({ success: true, checklists: checklists }))
                 .setMimeType(ContentService.MimeType.JSON);
         }
 
@@ -722,4 +731,129 @@ function getLastSteelMeasurements(ss) {
     }
 
     return lastMeasurements;
+}
+
+/**
+ * Guarda el Checklist de Equipos
+ */
+function saveChecklist(ss, data) {
+    const sheetName = data.type === 'Rotary' ? 'Checklist Rotary' : 'Checklist DTH';
+    let sheet = ss.getSheetByName(sheetName);
+
+    if (!sheet) {
+        // En caso de que no exista la hoja, no crearemos los encabezados enteros porque son muchos
+        // y el usuario debe crearlos según el formato. Sin embargo, insertaremos la hoja vacía y la fila
+        sheet = ss.insertSheet(sheetName);
+    }
+
+    // Ordenar los campos según el plan
+    const row = [
+        data.id || '',
+        data.date || '',
+        data.horometro || '',
+        data.operador || '',
+        data.perforadora || '',
+        data.cantidadAceros || '',
+        data.obsAceros || ''
+    ];
+
+    const ROTARY_ITEMS = [
+        'Manómetro Presión Rotación', 'Manómetro Presión Pull Down', 'Manómetro Presión Aire', 'Sistema Modular', 'Indicador RPM',
+        'Carrusel', 'Tazones', 'Rod Support', 'Rod Catcher', 'Cilindros Estabilizadores', 'Manillas de Control', 'Llave Corte',
+        'Llave Caimán', 'Mordazas', 'Estrella', 'Alineación y ajuste de Cabezal', 'Topes Mecánicos Superiores', 'Piola huinche',
+        'Contrapeso huinche', 'Gancho huinche', 'Sistema seguridad barra en pozo', 'Olla Corta Tricono 10 5/8', 'Olla Corta Tricono 12 1/4',
+        'Gorro porta Tricono', 'Pandeo de Barras (Fugas)', 'Deck Hold', 'Fusibles de Seguridad', 'Sello Wiper', 'Barandas seguridad'
+    ];
+
+    const DTH_ITEMS = [
+        'Manómetro Presión Rotación', 'Manómetro Presión Pull Down', 'Manómetro Presión Aire', 'Sistema Modular', 'Indicador RPM',
+        'Ajuste Unidad de rotacion', 'Deslizaderas', 'Coplon', 'Hilo de barras', 'Engrase automatico', 'Mordazas', 'Mesa de quiebre',
+        'Centralizadores', 'Capota de polvo', 'Manillas', 'Reguladores de presion', 'Botoneras', 'Inclinometros', 'Mirilla',
+        'Pandeo de Barras (Fugas)', 'Apriete de barras'
+    ];
+
+    const itemsList = data.type === 'Rotary' ? ROTARY_ITEMS : DTH_ITEMS;
+
+    itemsList.forEach(item => {
+        row.push(data.items && data.items[item] ? data.items[item] : 'NA | ');
+    });
+
+    row.push(new Date(data.createdAt).toLocaleString('es-CL'));
+
+    sheet.appendRow(row);
+}
+
+/**
+ * Obtiene los últimos checklists de Rotary y DTH
+ */
+function getLatestChecklists(ss) {
+    const results = [];
+    
+    const rotarySheet = ss.getSheetByName('Checklist Rotary');
+    if (rotarySheet) {
+        const data = rotarySheet.getDataRange().getValues();
+        const headers = data[0] || [];
+        // Últimas 50 filas
+        const rows = data.slice(-50).reverse();
+        // Filtrar la fila de encabezados si está en los últimos 50
+        rows.forEach(r => {
+            if (r[0] === 'ID' || !r[1]) return; // Saltar encabezados o filas vacías
+            
+            const itemMap = {};
+            // Los ítems empiezan en la columna 7 (índice 7)
+            for(let i = 7; i < headers.length; i++) {
+                if (headers[i] && headers[i] !== 'Fecha Creación') {
+                    itemMap[headers[i]] = r[i];
+                }
+            }
+
+            results.push({
+                type: 'Rotary',
+                id: r[0],
+                date: r[1],
+                horometro: r[2],
+                operador: r[3],
+                perforadora: r[4],
+                cantidadAceros: r[5],
+                obsAceros: r[6],
+                items: itemMap,
+                createdAt: r[r.length - 1] // Última columna (Fecha Creación)
+            });
+        });
+    }
+
+    const dthSheet = ss.getSheetByName('Checklist DTH');
+    if (dthSheet) {
+        const data = dthSheet.getDataRange().getValues();
+        const headers = data[0] || [];
+        const rows = data.slice(-50).reverse();
+        
+        rows.forEach(r => {
+            if (r[0] === 'ID' || !r[1]) return;
+            
+            const itemMap = {};
+            for(let i = 7; i < headers.length; i++) {
+                if (headers[i] && headers[i] !== 'Fecha Creación') {
+                    itemMap[headers[i]] = r[i];
+                }
+            }
+
+            results.push({
+                type: 'DTH',
+                id: r[0],
+                date: r[1],
+                horometro: r[2],
+                operador: r[3],
+                perforadora: r[4],
+                cantidadAceros: r[5],
+                obsAceros: r[6],
+                items: itemMap,
+                createdAt: r[r.length - 1]
+            });
+        });
+    }
+
+    // Ordenar globalmente por fecha de creación descendente
+    results.sort((a, b) => new Date(b.date) - new Date(a.date));
+    return results.slice(0, 50); // Devolver máximo 50
 }

@@ -213,6 +213,20 @@ export interface SteelDiscard {
   createdAt: number;
 }
 
+export interface ChecklistRecord {
+  id?: number;
+  type: 'Rotary' | 'DTH';
+  date: string;
+  horometro: string;
+  operador: string;
+  perforadora: string;
+  cantidadAceros: string;
+  obsAceros: string;
+  items: Record<string, string>; // e.g. "Manómetro Presión Rotación": "Bueno | Fuga leve"
+  synced: number;
+  createdAt: number;
+}
+
 export class LomasBayasDB extends Dexie {
   reports!: Table<ShiftReport>;
   steelChanges!: Table<SteelChange>;
@@ -221,17 +235,19 @@ export class LomasBayasDB extends Dexie {
   inventoryRecords!: Table<InventoryRecord>;
   pendingDeletions!: Table<PendingDeletion>;
   steelDiscards!: Table<SteelDiscard>;
+  checklists!: Table<ChecklistRecord>;
 
   constructor() {
     super('LomasBayasDB');
-    this.version(8).stores({
+    this.version(9).stores({
       reports: '++id, date, synced, createdAt',
       steelChanges: '++id, date, synced, createdAt',
       steelMeasurements: '++id, date, synced, createdAt',
       events: '++id, date, closed, synced, createdAt',
       inventoryRecords: '++id, date, synced, createdAt',
       pendingDeletions: '++id, type, recordId, synced, createdAt',
-      steelDiscards: '++id, date, tipoAcero, synced, createdAt'
+      steelDiscards: '++id, date, tipoAcero, synced, createdAt',
+      checklists: '++id, date, type, synced, createdAt'
     });
   }
 }
