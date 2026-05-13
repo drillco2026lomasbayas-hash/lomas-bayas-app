@@ -1690,17 +1690,50 @@ const App: React.FC = () => {
               value={steelChangeData.component}
               onChange={(e) => setSteelChangeData({ ...steelChangeData, component: e.target.value })}
             >
-              <option value="Amortiguador">Amortiguador</option>
-              <option value="Adaptador superior">Adaptador superior</option>
-              <option value="Barra Seguidora">Barra Seguidora</option>
-              <option value="Barra Patera">Barra Patera</option>
-              <option value="Adaptador inferior">Adaptador inferior</option>
-              <option value="Anillo Guia">Anillo Guia</option>
-              {['8', '11', '14'].includes(steelChangeData.drillNumber) ? (
-                <option value="Bit">Bit</option>
-              ) : (
-                <option value="Tricono">Tricono</option>
-              )}
+              {(() => {
+                const drill = steelChangeData.drillNumber;
+                if (['8', '11', '14'].includes(drill)) {
+                  return (
+                    <>
+                      <option value="Amortiguador">Amortiguador</option>
+                      <option value="Adaptador superior">Adaptador superior</option>
+                      <option value="Barra 1">Barra 1</option>
+                      <option value="Barra 2">Barra 2</option>
+                      <option value="Barra 3">Barra 3</option>
+                      <option value="Barra 4">Barra 4</option>
+                      <option value="Barra 5">Barra 5</option>
+                      <option value="Barra 6">Barra 6</option>
+                      <option value="Martillo">Martillo</option>
+                      <option value="Bit">Bit</option>
+                    </>
+                  );
+                } else if (drill === '5') {
+                  return (
+                    <>
+                      <option value="Amortiguador">Amortiguador</option>
+                      <option value="Adaptador superior">Adaptador superior</option>
+                      <option value="Barra Seguidora">Barra Seguidora</option>
+                      <option value="Barra Patera">Barra Patera</option>
+                      <option value="Adaptador Inferior">Adaptador Inferior</option>
+                      <option value="Anillo Guia">Anillo Guia</option>
+                      <option value="Tricono">Tricono</option>
+                    </>
+                  );
+                } else {
+                  return (
+                    <>
+                      <option value="Amortiguador">Amortiguador</option>
+                      <option value="Adaptador superior">Adaptador superior</option>
+                      <option value="Barra Seguidora 1">Barra Seguidora 1</option>
+                      <option value="Barra Seguidora 2">Barra Seguidora 2</option>
+                      <option value="Barra Patera">Barra Patera</option>
+                      <option value="Adaptador Inferior">Adaptador Inferior</option>
+                      <option value="Anillo Guia">Anillo Guia</option>
+                      <option value="Tricono">Tricono</option>
+                    </>
+                  );
+                }
+              })()}
             </select>
           </section>
 
