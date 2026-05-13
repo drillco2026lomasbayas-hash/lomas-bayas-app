@@ -593,12 +593,10 @@ function getLastSteelMeasurements(ss) {
     // 1. Obtener Información Básica (Garantizado y Promedio Metros)
     if (infoSheet) {
         const infoData = infoSheet.getDataRange().getValues();
-        // Promedio Metros en B20 (índice fila 19, col 1)
         if (infoData.length >= 20) {
             promedioMetros = Number(infoData[19][1]) || 0;
         }
 
-        // Leer Garantizados desde la fila 2 hacia abajo
         for (let i = 1; i < infoData.length; i++) {
             const compRaw = String(infoData[i][0]).trim().toLowerCase();
             const diam = String(infoData[i][1]).trim();
@@ -608,10 +606,9 @@ function getLastSteelMeasurements(ss) {
                 if (!garantizadosDict[diam]) garantizadosDict[diam] = {};
                 
                 let cat = '';
-                if (compRaw.includes('patera')) cat = 'patera';
-                else if (compRaw.includes('seguidora')) cat = 'seguidora';
-                else if (compRaw.includes('adaptador')) cat = 'adaptador';
-                // Si es otro componente (como amortiguador o martillo) no lo guardamos en las 3 categorías principales para este reporte
+                if (compRaw.includes('patera') || compRaw.includes('barra 1')) cat = 'patera';
+                else if (compRaw.includes('seguidora') || compRaw.includes('barra 2')) cat = 'seguidora';
+                else if (compRaw.includes('adaptador') || compRaw.includes('martillo')) cat = 'adaptador';
 
                 if (cat) {
                     garantizadosDict[diam][cat] = garantizado;
@@ -627,28 +624,41 @@ function getLastSteelMeasurements(ss) {
             const row = data[i];
             const drill = String(row[3]).trim(); // Col D: Perforadora
             if (drill) {
-                // Determinar el diámetro en base a la perforadora
                 let diam = '';
                 if (['8', '11', '14'].includes(drill)) diam = '4 1/2';
                 else if (['5', '6', '7', '12', '13'].includes(drill)) diam = '8 5/8';
                 else if (['9', '10'].includes(drill)) diam = '10 3/4';
 
+                const garPatera = garantizadosDict[diam]?.patera || 0;
+                const garSeguidora = garantizadosDict[diam]?.seguidora || 0;
+                const garAdaptador = garantizadosDict[diam]?.adaptador || 0;
+
                 lastMeasurements[drill] = {
                     date: row[1],
-                    // En la hoja Medición Aceros, índices según tu código saveSteelMeasurement
                     adaptador: { centro: row[4] },
-                    patera: { pin: row[5], centro: row[6], box: row[7] },
-                    seguidora: { pin: row[8], centro: row[9], box: row[10] },
+                    barras: [
+                        { pin: row[5], centro: row[6], box: row[7] }, // Barra 1 (Patera)
+                        { pin: row[8], centro: row[9], box: row[10] }, // Barra 2
+                        { pin: row[11], centro: row[12], box: row[13] }, // Barra 3
+                        { pin: row[14], centro: row[15], box: row[16] }, // Barra 4
+                        { pin: row[17], centro: row[18], box: row[19] }, // Barra 5
+                        { pin: row[20], centro: row[21], box: row[22] }  // Barra 6
+                    ],
                     obs: row[23] || '',
                     cambios: {
-                        patera: { instalacion: '', cambio: '', metros: 'N/A' },
-                        seguidora: { instalacion: '', cambio: '', metros: 'N/A' },
-                        adaptador: { instalacion: '', cambio: '', metros: 'N/A' }
+                        adaptador: { instalacion: '', cambio: '', metros: 'N/A' },
+                        barras: [
+                            { instalacion: '', cambio: '', metros: 'N/A' }, // Barra 1
+                            { instalacion: '', cambio: '', metros: 'N/A' }, // Barra 2
+                            { instalacion: '', cambio: '', metros: 'N/A' }, // Barra 3
+                            { instalacion: '', cambio: '', metros: 'N/A' }, // Barra 4
+                            { instalacion: '', cambio: '', metros: 'N/A' }, // Barra 5
+                            { instalacion: '', cambio: '', metros: 'N/A' }  // Barra 6
+                        ]
                     },
                     garantizados: {
-                        patera: (garantizadosDict[diam] && garantizadosDict[diam].patera) ? garantizadosDict[diam].patera : 0,
-                        seguidora: (garantizadosDict[diam] && garantizadosDict[diam].seguidora) ? garantizadosDict[diam].seguidora : 0,
-                        adaptador: (garantizadosDict[diam] && garantizadosDict[diam].adaptador) ? garantizadosDict[diam].adaptador : 0
+                        adaptador: garAdaptador,
+                        barras: [garPatera, garSeguidora, garSeguidora, garSeguidora, garSeguidora, garSeguidora]
                     },
                     promedioMetros: promedioMetros
                 };
@@ -656,10 +666,9 @@ function getLastSteelMeasurements(ss) {
         }
     }
 
-    // 3. Obtener fechas de cambios para Barra Patera, Barra Seguidora y Adaptador
+    // 3. Obtener fechas de cambios
     if (camSheet) {
         const data = camSheet.getDataRange().getValues();
-        // Agrupar por perforadora y tipo de componente para obtener los 2 últimos cambios
         const changes = {};
 
         for (let i = 1; i < data.length; i++) {
@@ -668,30 +677,45 @@ function getLastSteelMeasurements(ss) {
             const drill = String(row[2]).trim();
             const compRaw = String(row[4]).trim().toLowerCase();
             
-            // Mapear componente a nuestras 3 categorías clave
             let cat = '';
-            if (compRaw.includes('patera')) cat = 'patera';
-            else if (compRaw.includes('seguidora')) cat = 'seguidora';
-            else if (compRaw.includes('adaptador')) cat = 'adaptador';
+            let barraIndex = -1;
+
+            if (compRaw.includes('barra 1') || compRaw.includes('patera')) { cat = 'barras'; barraIndex = 0; }
+            else if (compRaw.includes('barra 2') || compRaw === 'barra seguidora') { cat = 'barras'; barraIndex = 1; }
+            else if (compRaw.includes('barra 3')) { cat = 'barras'; barraIndex = 2; }
+            else if (compRaw.includes('barra 4')) { cat = 'barras'; barraIndex = 3; }
+            else if (compRaw.includes('barra 5')) { cat = 'barras'; barraIndex = 4; }
+            else if (compRaw.includes('barra 6')) { cat = 'barras'; barraIndex = 5; }
+            else if (compRaw.includes('adaptador') || compRaw.includes('martillo')) cat = 'adaptador';
 
             if (drill && cat) {
                 if (!changes[drill]) changes[drill] = {};
-                if (!changes[drill][cat]) changes[drill][cat] = [];
-                changes[drill][cat].push(dateStr);
+                
+                if (cat === 'barras') {
+                    if (!changes[drill].barras) changes[drill].barras = [[], [], [], [], [], []];
+                    if (barraIndex !== -1) changes[drill].barras[barraIndex].push(dateStr);
+                } else {
+                    if (!changes[drill][cat]) changes[drill][cat] = [];
+                    changes[drill][cat].push(dateStr);
+                }
             }
         }
 
-        // Asignar al objeto principal
         for (const drill in lastMeasurements) {
             if (changes[drill]) {
-                for (const cat in changes[drill]) {
-                    const arr = changes[drill][cat];
-                    // La última entrada (al final del array) es la instalación actual
-                    const instalacion = arr[arr.length - 1];
-                    // La penúltima es el cambio anterior
-                    const cambio = arr.length > 1 ? arr[arr.length - 2] : '';
-                    lastMeasurements[drill].cambios[cat].instalacion = instalacion;
-                    lastMeasurements[drill].cambios[cat].cambio = cambio;
+                if (changes[drill].adaptador) {
+                    const arr = changes[drill].adaptador;
+                    lastMeasurements[drill].cambios.adaptador.instalacion = arr[arr.length - 1];
+                    lastMeasurements[drill].cambios.adaptador.cambio = arr.length > 1 ? arr[arr.length - 2] : '';
+                }
+                if (changes[drill].barras) {
+                    for (let b = 0; b < 6; b++) {
+                        const arr = changes[drill].barras[b];
+                        if (arr && arr.length > 0) {
+                            lastMeasurements[drill].cambios.barras[b].instalacion = arr[arr.length - 1];
+                            lastMeasurements[drill].cambios.barras[b].cambio = arr.length > 1 ? arr[arr.length - 2] : '';
+                        }
+                    }
                 }
             }
         }

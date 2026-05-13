@@ -111,11 +111,10 @@ const App: React.FC = () => {
   type DrillMeasurements = {
     date?: string;
     adaptador?: ComponentMeasurements;
-    patera?: ComponentMeasurements;
-    seguidora?: ComponentMeasurements;
+    barras?: ComponentMeasurements[];
     obs?: string;
-    cambios?: { patera?: ComponentChanges; seguidora?: ComponentChanges; adaptador?: ComponentChanges };
-    garantizados?: { patera?: number; seguidora?: number; adaptador?: number };
+    cambios?: { barras?: ComponentChanges[]; adaptador?: ComponentChanges };
+    garantizados?: { barras?: number[]; adaptador?: number };
     promedioMetros?: number;
   };
   const [diametersData, setDiametersData] = useState<Record<string, DrillMeasurements>>({});
@@ -3003,7 +3002,7 @@ const App: React.FC = () => {
             }}>
               {['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'].map(drill => {
                 const value = diametersData[drill];
-                let valMm = value?.patera?.box || value?.seguidora?.box || value?.adaptador?.centro || 0;
+                let valMm = value?.barras?.[0]?.box || value?.barras?.[1]?.box || value?.adaptador?.centro || 0;
                 if (valMm && valMm < 50) {
                   valMm = valMm * 25.4;
                 }
