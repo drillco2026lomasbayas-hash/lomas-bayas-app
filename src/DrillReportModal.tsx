@@ -161,7 +161,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
           {title}
         </div>
         <div style={{ position: 'relative', display: 'flex', gap: '1rem', height: '250px' }}>
-          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: hasThreePoints ? 'space-between' : 'center', py: '1rem' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: hasThreePoints ? 'space-between' : 'center', padding: '1rem 0' }}>
             {hasThreePoints ? (
               <>
                 <CirclePercentage percentage={percPin} />

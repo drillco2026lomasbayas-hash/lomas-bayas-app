@@ -3003,7 +3003,7 @@ const App: React.FC = () => {
             }}>
               {['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'].map(drill => {
                 const value = diametersData[drill];
-                let valMm = value?.patera?.box || value?.patera?.inferior || value?.seguidora?.box || value?.adaptador?.centro || 0;
+                let valMm = value?.patera?.box || value?.seguidora?.box || value?.adaptador?.centro || 0;
                 if (valMm && valMm < 50) {
                   valMm = valMm * 25.4;
                 }
