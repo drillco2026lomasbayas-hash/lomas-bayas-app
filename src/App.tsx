@@ -19,6 +19,7 @@ import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import './index.css';
+import DrillReportModal from './DrillReportModal';
 
 // Utilidad para comprimir imágenes y reducir su peso a ~1MB o menos
 const compressImage = (file: File): Promise<string> => {
@@ -102,7 +103,24 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : [];
   });
   const [pendingCount, setPendingCount] = useState(0);
-  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros'>('reporte');
+  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros'>('reporte');
+
+  // Estado para Control de Diámetros
+  type ComponentMeasurements = { pin?: number; centro?: number; box?: number };
+  type ComponentChanges = { instalacion?: string; cambio?: string; metros?: string | number };
+  type DrillMeasurements = {
+    date?: string;
+    adaptador?: ComponentMeasurements;
+    patera?: ComponentMeasurements;
+    seguidora?: ComponentMeasurements;
+    obs?: string;
+    cambios?: { patera?: ComponentChanges; seguidora?: ComponentChanges; adaptador?: ComponentChanges };
+    garantizados?: { patera?: number; seguidora?: number; adaptador?: number };
+    promedioMetros?: number;
+  };
+  const [diametersData, setDiametersData] = useState<Record<string, DrillMeasurements>>({});
+  const [selectedDrillForReport, setSelectedDrillForReport] = useState<string | null>(null);
+  const [loadingDiameters, setLoadingDiameters] = useState(false);
 
   // Estado para Reporte General
   const [reportData, setReportData] = useState(() => {
@@ -279,6 +297,8 @@ const App: React.FC = () => {
       loadLastInventory();
     } else if (currentPage === 'eventos') {
       loadOpenEvents();
+    } else if (currentPage === 'controlDiametros') {
+      downloadSteelMeasurementsFromSheet();
     }
   }, [currentPage]);
 
@@ -594,6 +614,22 @@ const App: React.FC = () => {
   };
 
 
+
+  // Descargar mediciones de acero desde Google Sheets
+  const downloadSteelMeasurementsFromSheet = async () => {
+    try {
+      setLoadingDiameters(true);
+      const response = await fetch(`${GAS_URL}?action=getSteelMeasurements`);
+      const result = await response.json();
+      if (result.success && result.measurements) {
+        setDiametersData(result.measurements);
+      }
+    } catch (error) {
+      console.error('Error descargando mediciones de acero:', error);
+    } finally {
+      setLoadingDiameters(false);
+    }
+  };
 
   // Descargar eventos desde Google Sheets
   const downloadEventsFromSheet = async (): Promise<Event[]> => {
@@ -2320,7 +2356,10 @@ const App: React.FC = () => {
             </section>
 
             {/* Control de Diámetros */}
-            <section className="card" style={{ cursor: 'pointer', textAlign: 'center', opacity: 0.6 }}>
+            <section
+              className="card"
+              onClick={() => setCurrentPage('controlDiametros')}
+              style={{ cursor: 'pointer', textAlign: 'center' }}>
               <div style={{
                 background: 'rgba(40, 167, 69, 0.1)',
                 borderRadius: '12px',
@@ -2332,7 +2371,7 @@ const App: React.FC = () => {
               </div>
               <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem' }}>Control de Diámetros</h3>
               <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
-                Próximamente
+                Estado de desgaste de aceros
               </p>
             </section>
 
@@ -2901,6 +2940,157 @@ const App: React.FC = () => {
               {uploadingDiscardPhoto ? 'SUBIENDO...' : 'GUARDAR'}
             </button>
           </div>
+        </main>
+      )}
+
+      {/* Página Control de Diámetros */}
+      {currentPage === 'controlDiametros' && (
+        <main className="container" style={{ paddingBottom: '80px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1.5rem', gap: '1rem' }}>
+            <button 
+              onClick={() => setCurrentPage('analista')}
+              style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: '0.5rem' }}
+            >
+              ← VOLVER
+            </button>
+            <h2 style={{ margin: 0, color: 'var(--text-dark)' }}>CONTROL DE DIÁMETROS</h2>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1.5rem' }}>
+            {/* Leyenda */}
+            <section className="card" style={{ marginBottom: 0, padding: '1rem' }}>
+              <h3 style={{ fontSize: '0.9rem', marginBottom: '0.8rem', color: 'var(--text-muted)' }}>ESTADO (VIDA ÚTIL)</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.8rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#28a745' }}></div>
+                  <span><strong>VERDE:</strong> &gt; 66%</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#ffc107' }}></div>
+                  <span><strong>AMARILLO:</strong> 33% - 66%</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#dc3545' }}></div>
+                  <span><strong>ROJO:</strong> &lt; 33%</span>
+                </div>
+              </div>
+            </section>
+
+            {/* Umbrales */}
+            <section className="card" style={{ marginBottom: 0, padding: '1rem' }}>
+              <h3 style={{ fontSize: '0.9rem', marginBottom: '0.8rem', color: 'var(--text-muted)' }}>UMBRALES DESCARTE</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.75rem' }}>
+                <div><strong>Perf 8, 11, 14:</strong> 114.3mm → 108mm</div>
+                <div><strong>Perf 5, 6, 7, 12, 13:</strong> 219mm → 194mm</div>
+                <div><strong>Perf 9, 10:</strong> 273mm → 248mm</div>
+              </div>
+            </section>
+          </div>
+
+          <section className="card">
+            <div className="card-title" style={{ marginBottom: '1.5rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Activity size={20} />
+                <span>ESTADO POR PERFORADORA</span>
+              </div>
+              {loadingDiameters && <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Actualizando...</span>}
+            </div>
+
+            <div style={{ 
+              display: 'grid', 
+              gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', 
+              gap: '1rem' 
+            }}>
+              {['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'].map(drill => {
+                const value = diametersData[drill];
+                let valMm = value?.patera?.box || value?.patera?.inferior || value?.seguidora?.box || value?.adaptador?.centro || 0;
+                if (valMm && valMm < 50) {
+                  valMm = valMm * 25.4;
+                }
+                
+                let min = 0, max = 0;
+                if (['8', '11', '14'].includes(drill)) { min = 108; max = 114.3; }
+                else if (['5', '6', '7', '12', '13'].includes(drill)) { min = 194; max = 219; }
+                else if (['9', '10'].includes(drill)) { min = 248; max = 273; }
+
+                let percentage = null;
+                let color = '#f0f2f5'; // default gris
+                let colorText = '#6c757d';
+                let stateText = 'SIN DATOS';
+
+                if (valMm > 0) {
+                  percentage = ((valMm - min) / (max - min)) * 100;
+                  if (percentage > 100) percentage = 100;
+                  if (percentage < 0) percentage = 0;
+
+                  if (percentage > 66) { color = '#d4edda'; colorText = '#155724'; stateText = 'OK'; }
+                  else if (percentage >= 33) { color = '#fff3cd'; colorText = '#856404'; stateText = 'PRECAUCIÓN'; }
+                  else { color = '#f8d7da'; colorText = '#721c24'; stateText = 'CRÍTICO'; }
+                }
+
+                return (
+                  <div key={drill} style={{
+                    background: color,
+                    border: `1px solid ${color !== '#f0f2f5' ? colorText : '#ddd'}`,
+                    borderRadius: '12px',
+                    padding: '1rem',
+                    textAlign: 'center',
+                    boxShadow: '0 4px 6px rgba(0,0,0,0.04)',
+                    transition: 'transform 0.2s ease',
+                    cursor: valMm > 0 ? 'pointer' : 'default'
+                  }}
+                  onClick={() => { if(valMm > 0) setSelectedDrillForReport(drill) }}
+                  onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)' }}
+                  onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)' }}
+                  >
+                    <div style={{ fontSize: '1.8rem', fontWeight: 800, color: colorText, marginBottom: '0.2rem' }}>
+                      P{drill}
+                    </div>
+                    <div style={{ fontSize: '0.8rem', fontWeight: 700, color: colorText, marginBottom: '0.5rem', letterSpacing: '0.5px' }}>
+                      {stateText}
+                    </div>
+                    {valMm > 0 ? (
+                      <>
+                        <div style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--text-dark)' }}>
+                          {valMm.toFixed(1)} <span style={{ fontSize: '0.7rem' }}>mm</span>
+                        </div>
+                        <div style={{ 
+                          width: '100%', 
+                          height: '6px', 
+                          background: 'rgba(0,0,0,0.1)', 
+                          borderRadius: '3px', 
+                          marginTop: '0.5rem',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{ 
+                            width: `${percentage}%`, 
+                            height: '100%', 
+                            background: colorText,
+                            borderRadius: '3px'
+                          }}></div>
+                        </div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.3rem', textAlign: 'right' }}>
+                          {percentage?.toFixed(0)}%
+                        </div>
+                      </>
+                    ) : (
+                      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)', marginTop: '1rem' }}>
+                        -
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+          
+          {selectedDrillForReport && diametersData[selectedDrillForReport] && (
+            <DrillReportModal 
+              drill={selectedDrillForReport}
+              data={diametersData[selectedDrillForReport]}
+              onClose={() => setSelectedDrillForReport(null)}
+            />
+          )}
         </main>
       )}
 
