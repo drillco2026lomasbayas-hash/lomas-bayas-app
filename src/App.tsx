@@ -3044,7 +3044,8 @@ const App: React.FC = () => {
             <section className="card" style={{ marginBottom: 0, padding: '1rem' }}>
               <h3 style={{ fontSize: '0.9rem', marginBottom: '0.8rem', color: 'var(--text-muted)' }}>UMBRALES DESCARTE</h3>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', fontSize: '0.75rem' }}>
-                <div><strong>Perf 8, 11, 14:</strong> 114.3mm → 108mm</div>
+                <div><strong>Perf 8, 11, 14 (Barras):</strong> 114.3mm → 108mm</div>
+                <div><strong>Perf 8, 11, 14 (Martillo):</strong> 165mm → 132mm</div>
                 <div><strong>Perf 5, 6, 7, 12, 13:</strong> 219mm → 194mm</div>
                 <div><strong>Perf 9, 10:</strong> 273mm → 248mm</div>
               </div>
@@ -3067,26 +3068,43 @@ const App: React.FC = () => {
             }}>
               {['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'].map(drill => {
                 const value = diametersData[drill];
-                let valMm = value?.barras?.[0]?.box || value?.barras?.[1]?.box || value?.adaptador?.centro || 0;
-                if (valMm && valMm < 50) {
-                  valMm = valMm * 25.4;
-                }
+                const isDTHDrill = ['8', '11', '14'].includes(drill);
                 
-                let min = 0, max = 0;
-                if (['8', '11', '14'].includes(drill)) { min = 108; max = 114.3; }
-                else if (['5', '6', '7', '12', '13'].includes(drill)) { min = 194; max = 219; }
-                else if (['9', '10'].includes(drill)) { min = 248; max = 273; }
+                const getCompInfo = (val: number | undefined, isMart: boolean) => {
+                  if (!val) return null;
+                  let v = val < 50 ? val * 25.4 : val;
+                  let mn = 0, mx = 0;
+                  if (isDTHDrill) {
+                    if (isMart) { mn = 132; mx = 165; }
+                    else { mn = 108; mx = 114.3; }
+                  } else if (['5', '6', '7', '12', '13'].includes(drill)) { mn = 194; mx = 219; }
+                  else if (['9', '10'].includes(drill)) { mn = 248; mx = 273; }
+                  
+                  let p = ((v - mn) / (mx - mn)) * 100;
+                  p = Math.max(0, Math.min(100, p));
+                  return { p, v };
+                };
 
+                const percs = [
+                  getCompInfo(value?.barras?.[0]?.box, false),
+                  getCompInfo(value?.barras?.[1]?.box, false),
+                  getCompInfo(value?.adaptador?.centro, isDTHDrill)
+                ].filter(x => x !== null) as { p: number, v: number }[];
+                
                 let percentage = null;
+                let valMm = 0;
+                
+                if (percs.length > 0) {
+                  const worst = percs.reduce((prev, curr) => (curr.p < prev.p) ? curr : prev);
+                  percentage = worst.p;
+                  valMm = worst.v;
+                }
+
                 let color = '#f0f2f5'; // default gris
                 let colorText = '#6c757d';
                 let stateText = 'SIN DATOS';
 
-                if (valMm > 0) {
-                  percentage = ((valMm - min) / (max - min)) * 100;
-                  if (percentage > 100) percentage = 100;
-                  if (percentage < 0) percentage = 0;
-
+                if (percentage !== null) {
                   if (percentage > 66) { color = '#d4edda'; colorText = '#155724'; stateText = 'OK'; }
                   else if (percentage >= 33) { color = '#fff3cd'; colorText = '#856404'; stateText = 'PRECAUCIÓN'; }
                   else { color = '#f8d7da'; colorText = '#721c24'; stateText = 'CRÍTICO'; }

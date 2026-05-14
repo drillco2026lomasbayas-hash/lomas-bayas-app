@@ -41,13 +41,19 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
 
   const isDTH = ['8', '11', '14'].includes(drill);
 
-  const calculatePercentage = (val?: number, drillName?: string) => {
+  const calculatePercentage = (val?: number, drillName?: string, isMartilloComp: boolean = false) => {
     if (!val || !drillName) return null;
     let valMm = val;
     if (valMm < 50) valMm = valMm * 25.4;
     
     let min = 0, max = 0;
-    if (['8', '11', '14'].includes(drillName)) { min = 108; max = 114.3; }
+    if (['8', '11', '14'].includes(drillName)) {
+      if (isMartilloComp) {
+        min = 132; max = 165;
+      } else {
+        min = 108; max = 114.3;
+      }
+    }
     else if (['5', '6', '7', '12', '13'].includes(drillName)) { min = 194; max = 219; }
     else if (['9', '10'].includes(drillName)) { min = 248; max = 273; }
 
@@ -74,7 +80,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
     if (!garantizado || !promedioMetros || promedioMetros <= 0 || !medicionDateStr) return null;
 
     const pPin = calculatePercentage(measurements?.pin, drillName);
-    const pCentro = calculatePercentage(measurements?.centro, drillName);
+    const pCentro = calculatePercentage(measurements?.centro, drillName, isDTH && measurements === data.adaptador);
     const pBox = calculatePercentage(measurements?.box, drillName);
 
     const percs = [pPin, pCentro, pBox].filter(p => p !== null) as number[];
@@ -158,9 +164,10 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
   };
 
   const renderComponentColumn = (title: string, imgSrc: string, measurements?: ComponentMeasurements, hasThreePoints: boolean = true) => {
-    const percPin = calculatePercentage(measurements?.pin, drill);
-    const percCentro = calculatePercentage(measurements?.centro, drill);
-    const percBox = calculatePercentage(measurements?.box, drill);
+    const isMartillo = isDTH && title === 'MARTILLO';
+    const percPin = calculatePercentage(measurements?.pin, drill, isMartillo);
+    const percCentro = calculatePercentage(measurements?.centro, drill, isMartillo);
+    const percBox = calculatePercentage(measurements?.box, drill, isMartillo);
 
     return (
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', minWidth: isDTH ? '100px' : '150px' }}>
@@ -197,7 +204,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
   };
 
   let stateTricono = 'Sin Datos';
-  const lowestAdaptadorPerc = calculatePercentage(data?.adaptador?.centro, drill);
+  const lowestAdaptadorPerc = calculatePercentage(data?.adaptador?.centro, drill, isDTH);
   if (lowestAdaptadorPerc !== null) {
     if (lowestAdaptadorPerc > 33) stateTricono = 'Operativo';
     else stateTricono = 'Descarte';
