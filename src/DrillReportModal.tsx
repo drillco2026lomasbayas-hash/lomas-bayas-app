@@ -39,6 +39,34 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
   const reportRef = useRef<HTMLDivElement>(null);
   const [generatingPDF, setGeneratingPDF] = useState(false);
 
+  // Normaliza cualquier formato de fecha a YYYY-MM-DD para inputs type="date"
+  const toDateInputValue = (val: any): string => {
+    if (!val) return '';
+    try {
+      const d = new Date(val);
+      if (isNaN(d.getTime())) return String(val);
+      return d.toISOString().split('T')[0];
+    } catch {
+      return String(val);
+    }
+  };
+
+  // Estado local editable para la tabla "Fechas de Cambio"
+  // Se inicializa con los datos del Sheet cuando están disponibles
+  const barsCount = ['8', '11', '14'].includes(drill) ? 6 : 2;
+  const [editCambiosBarras, setEditCambiosBarras] = useState<ComponentChanges[]>(() =>
+    Array.from({ length: barsCount }).map((_, i) => ({
+      metros: data.cambios?.barras?.[i]?.metros ?? '',
+      instalacion: toDateInputValue(data.cambios?.barras?.[i]?.instalacion),
+      cambio: data.cambios?.barras?.[i]?.cambio ?? '',
+    }))
+  );
+  const [editCambiosAdaptador, setEditCambiosAdaptador] = useState<ComponentChanges>({
+    metros: data.cambios?.adaptador?.metros ?? '',
+    instalacion: toDateInputValue(data.cambios?.adaptador?.instalacion),
+    cambio: data.cambios?.adaptador?.cambio ?? '',
+  });
+
   const isDTH = ['8', '11', '14'].includes(drill);
 
   const calculatePercentage = (val?: number, drillName?: string, isMartilloComp: boolean = false) => {
@@ -211,7 +239,6 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
   }
 
   // Si es DTH mostramos hasta la barra 6. Si es Rotary solo Barra 1 y Barra 2.
-  const barsCount = isDTH ? 6 : 2;
   const barrasToRender = Array.from({ length: barsCount }).map((_, i) => data.barras?.[i] || {});
 
   return (
@@ -347,25 +374,62 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
                 </thead>
                 <tbody>
                   {barrasToRender.map((b, idx) => {
-                    const cambios = data.cambios?.barras?.[idx];
                     const garantizado = data.garantizados?.barras?.[idx];
                     return (
                       <tr key={`tr-cambios-${idx}`} style={{ borderBottom: '1px solid #000' }}>
                         <td style={{ borderRight: '2px solid #000', padding: '0.4rem', fontWeight: 'bold' }}>Barra {idx + 1}</td>
-                        <td style={{ borderRight: '2px solid #000', padding: '0.4rem' }}>{cambios?.metros || 'N/A'}</td>
-                        <td style={{ borderRight: '2px solid #000', padding: '0.4rem' }}>{formatDate(cambios?.instalacion)}</td>
+                        <td style={{ borderRight: '2px solid #000', padding: '0.2rem' }}>
+                          <input
+                            type="text"
+                            value={editCambiosBarras[idx]?.metros ?? ''}
+                            onChange={(e) => {
+                              const updated = [...editCambiosBarras];
+                              updated[idx] = { ...updated[idx], metros: e.target.value };
+                              setEditCambiosBarras(updated);
+                            }}
+                            style={{ width: '100%', textAlign: 'center', border: '1px solid #ccc', borderRadius: '4px', padding: '0.2rem', fontSize: 'inherit', boxSizing: 'border-box' }}
+                            placeholder="Metros"
+                          />
+                        </td>
+                        <td style={{ borderRight: '2px solid #000', padding: '0.2rem' }}>
+                          <input
+                            type="date"
+                            value={editCambiosBarras[idx]?.instalacion ?? ''}
+                            onChange={(e) => {
+                              const updated = [...editCambiosBarras];
+                              updated[idx] = { ...updated[idx], instalacion: e.target.value };
+                              setEditCambiosBarras(updated);
+                            }}
+                            style={{ width: '100%', textAlign: 'center', border: '1px solid #ccc', borderRadius: '4px', padding: '0.2rem', fontSize: 'inherit', boxSizing: 'border-box' }}
+                          />
+                        </td>
                         <td style={{ padding: '0.4rem' }}>
-                          {getProjectedChangeDate(b, drill, garantizado, data.promedioMetros, data.date) || formatDate(cambios?.cambio)}
+                          {getProjectedChangeDate(b, drill, garantizado, data.promedioMetros, data.date) || formatDate(editCambiosBarras[idx]?.cambio)}
                         </td>
                       </tr>
                     );
                   })}
                   <tr>
                     <td style={{ borderRight: '2px solid #000', padding: '0.4rem', fontWeight: 'bold' }}>{isDTH ? 'Martillo' : 'Adaptador'}</td>
-                    <td style={{ borderRight: '2px solid #000', padding: '0.4rem' }}>{data.cambios?.adaptador?.metros || 'N/A'}</td>
-                    <td style={{ borderRight: '2px solid #000', padding: '0.4rem' }}>{formatDate(data.cambios?.adaptador?.instalacion)}</td>
+                    <td style={{ borderRight: '2px solid #000', padding: '0.2rem' }}>
+                      <input
+                        type="text"
+                        value={editCambiosAdaptador.metros ?? ''}
+                        onChange={(e) => setEditCambiosAdaptador({ ...editCambiosAdaptador, metros: e.target.value })}
+                        style={{ width: '100%', textAlign: 'center', border: '1px solid #ccc', borderRadius: '4px', padding: '0.2rem', fontSize: 'inherit', boxSizing: 'border-box' }}
+                        placeholder="Metros"
+                      />
+                    </td>
+                    <td style={{ borderRight: '2px solid #000', padding: '0.2rem' }}>
+                      <input
+                        type="date"
+                        value={editCambiosAdaptador.instalacion ?? ''}
+                        onChange={(e) => setEditCambiosAdaptador({ ...editCambiosAdaptador, instalacion: e.target.value })}
+                        style={{ width: '100%', textAlign: 'center', border: '1px solid #ccc', borderRadius: '4px', padding: '0.2rem', fontSize: 'inherit', boxSizing: 'border-box' }}
+                      />
+                    </td>
                     <td style={{ padding: '0.4rem' }}>
-                      {getProjectedChangeDate(data.adaptador, drill, data.garantizados?.adaptador, data.promedioMetros, data.date) || formatDate(data.cambios?.adaptador?.cambio)}
+                      {getProjectedChangeDate(data.adaptador, drill, data.garantizados?.adaptador, data.promedioMetros, data.date) || formatDate(editCambiosAdaptador.cambio)}
                     </td>
                   </tr>
                 </tbody>
