@@ -194,7 +194,7 @@ export const LoginView: React.FC = () => {
               required
               value={identifier}
               onChange={(e) => setIdentifier(e.target.value)}
-              placeholder="Ej: drillcoadmin o applomas"
+              placeholder="Ingresa tu usuario o correo"
               style={{
                 width: '100%',
                 padding: '0.75rem 0.9rem',
