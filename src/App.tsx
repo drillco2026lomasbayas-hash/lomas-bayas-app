@@ -21,6 +21,10 @@ import autoTable from 'jspdf-autotable';
 import './index.css';
 import DrillReportModal from './DrillReportModal';
 import { ChecklistPage } from './ChecklistPage';
+import { SyncStatusBar } from './SyncStatusBar';
+import { useAuth } from './AuthContext';
+import { LoginView } from './LoginView';
+import { AdminPanel } from './AdminPanel';
 
 // Utilidad para comprimir imágenes y reducir su peso a ~1MB o menos
 const compressImage = (file: File): Promise<string> => {
@@ -104,7 +108,8 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : [];
   });
   const [pendingCount, setPendingCount] = useState(0);
-  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros' | 'checklist'>('reporte');
+  const { profile, loading: authLoading } = useAuth();
+  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros' | 'checklist' | 'admin'>('reporte');
 
   // Estado para Control de Diámetros
   type ComponentMeasurements = { pin?: number; centro?: number; box?: number };
@@ -1319,9 +1324,31 @@ const App: React.FC = () => {
   const minDate = `${currentYear - 5}-01-01`;
   const maxDate = `${currentYear + 5}-12-31`;
 
+  if (authLoading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        backgroundColor: '#0f172a',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#f2c12e',
+        fontSize: '1.1rem',
+        fontWeight: 600
+      }}>
+        Cargando sistema Lomas Bayas...
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return <LoginView />;
+  }
+
   return (
     <div>
-      <div className="connectivity-status">
+      <SyncStatusBar />
+      <div className="connectivity-status" style={{ display: 'none' }}>
         {isOnline ? (
           <><Wifi size={14} style={{ verticalAlign: 'middle', marginRight: '5px' }} /> ONLINE{pendingCount > 0 ? ` - ${pendingCount} PENDIENTE(S)` : ' - SINCRONIZADO'}</>
         ) : (
@@ -2430,6 +2457,29 @@ const App: React.FC = () => {
               </p>
             </section>
 
+            {/* Panel Administrador (Solo Admin) */}
+            {profile?.role === 'admin' && (
+              <section
+                className="card"
+                onClick={() => setCurrentPage('admin')}
+                style={{ cursor: 'pointer', textAlign: 'center', border: '2px solid #f2c12e' }}
+              >
+                <div style={{
+                  background: 'rgba(242, 193, 46, 0.15)',
+                  borderRadius: '12px',
+                  padding: '1rem',
+                  display: 'inline-block',
+                  marginBottom: '0.5rem'
+                }}>
+                  <HardHat size={32} style={{ color: '#d4a724' }} />
+                </div>
+                <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem', color: '#1a252f' }}>Panel Administrador</h3>
+                <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
+                  Gestión privada de cuentas operativas
+                </p>
+              </section>
+            )}
+
             {/* Estadística de Aceros */}
             <section className="card" style={{ cursor: 'pointer', textAlign: 'center', opacity: 0.6 }}>
               <div style={{
@@ -3174,6 +3224,11 @@ const App: React.FC = () => {
             />
           )}
         </main>
+      )}
+
+      {/* Panel Privado Administrador */}
+      {currentPage === 'admin' && (
+        <AdminPanel onBack={() => setCurrentPage('analista')} />
       )}
 
       <nav className="bottom-nav">
