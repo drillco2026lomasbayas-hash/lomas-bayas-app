@@ -162,6 +162,17 @@ create table if not exists public.checklists (
   updated_at timestamptz default now()
 );
 
+-- 9.5 TABLA: ESTADO DE PERFORADORAS (drill_statuses)
+create table if not exists public.drill_statuses (
+  drill_number text primary key,
+  model text not null,
+  status text not null default 'Operativa',
+  phase text default '',
+  user_id uuid references auth.users on delete set null,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
 -- ==============================================================================
 -- 10. ROW LEVEL SECURITY (RLS) & POLÍTICAS
 -- Permite acceso a usuarios autenticados para lectura, inserción y actualización
@@ -175,6 +186,7 @@ alter table public.events enable row level security;
 alter table public.inventory_records enable row level security;
 alter table public.steel_discards enable row level security;
 alter table public.checklists enable row level security;
+alter table public.drill_statuses enable row level security;
 
 -- Políticas para profiles
 drop policy if exists "Perfiles visibles por usuarios autenticados" on public.profiles;
@@ -189,7 +201,7 @@ create policy "Usuarios pueden actualizar su propio perfil"
 do $$
 declare
   t text;
-  tables text[] := array['shift_reports', 'steel_changes', 'steel_measurements', 'events', 'inventory_records', 'steel_discards', 'checklists'];
+  tables text[] := array['shift_reports', 'steel_changes', 'steel_measurements', 'events', 'inventory_records', 'steel_discards', 'checklists', 'drill_statuses'];
 begin
   foreach t in array tables loop
     execute format('drop policy if exists "Lectura autenticada en %1$I" on public.%1$I', t);

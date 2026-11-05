@@ -227,6 +227,17 @@ export interface ChecklistRecord {
   createdAt: number;
 }
 
+export interface DrillStatusRecord {
+  id?: number;
+  drillNumber: string; // '5', '6', '7', '8', '9', '10', '11', '12', '13', '14'
+  model: string; // 'ROC L8', 'PV275', 'PV275XC', 'MD6540'
+  status: 'Operativa' | 'Mecanica' | 'Fuera de servicio';
+  phase: string; // Fase / Ubicación
+  updatedAt: number;
+  updatedBy?: string;
+  synced: number;
+}
+
 export class LomasBayasDB extends Dexie {
   reports!: Table<ShiftReport>;
   steelChanges!: Table<SteelChange>;
@@ -236,10 +247,11 @@ export class LomasBayasDB extends Dexie {
   pendingDeletions!: Table<PendingDeletion>;
   steelDiscards!: Table<SteelDiscard>;
   checklists!: Table<ChecklistRecord>;
+  drillStatuses!: Table<DrillStatusRecord>;
 
   constructor() {
     super('LomasBayasDB');
-    this.version(9).stores({
+    this.version(10).stores({
       reports: '++id, date, synced, createdAt',
       steelChanges: '++id, date, synced, createdAt',
       steelMeasurements: '++id, date, synced, createdAt',
@@ -247,7 +259,8 @@ export class LomasBayasDB extends Dexie {
       inventoryRecords: '++id, date, synced, createdAt',
       pendingDeletions: '++id, type, recordId, synced, createdAt',
       steelDiscards: '++id, date, tipoAcero, synced, createdAt',
-      checklists: '++id, date, type, synced, createdAt'
+      checklists: '++id, date, type, synced, createdAt',
+      drillStatuses: '++id, drillNumber, status, phase, synced, updatedAt'
     });
   }
 }

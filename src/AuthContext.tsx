@@ -26,6 +26,8 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const LOCAL_PROFILE_KEY = 'lomasbayas_cached_profile';
 const OFFLINE_SESSION_KEY = 'lomasbayas_offline_session';
+const LAST_ONLINE_VERIFY_KEY = 'lomasbayas_last_online_verify';
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -41,9 +43,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
-  // Monitor de conectividad
+  // Monitor de conectividad y verificación online si vuelve el internet
   useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
+    const handleOnline = () => {
+      setIsOffline(false);
+      verifySessionOnline();
+    };
     const handleOffline = () => setIsOffline(true);
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -66,9 +71,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!error && data) {
         setProfile(data);
         localStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(data));
+        localStorage.setItem(LAST_ONLINE_VERIFY_KEY, Date.now().toString());
       }
     } catch (err) {
       console.warn('No se pudo obtener el perfil remoto (modo offline):', err);
+    }
+  };
+
+  // Verifica si la sesión necesita revalidación (cada 7 días conectado a internet)
+  const verifySessionOnline = async () => {
+    if (!navigator.onLine) return; // Si no hay internet, no se exige verificación
+    const lastVerifyStr = localStorage.getItem(LAST_ONLINE_VERIFY_KEY);
+    const lastVerify = lastVerifyStr ? parseInt(lastVerifyStr, 10) : 0;
+    const now = Date.now();
+
+    // Solo si pasaron 7 días o nunca se ha verificado
+    if (now - lastVerify > SEVEN_DAYS_MS) {
+      try {
+        const { data: { user: currentUser }, error } = await supabase.auth.getUser();
+        if (error || !currentUser) {
+          console.warn('Sesión revocada o expirada tras 7 días de verificación online');
+          await signOut();
+          return;
+        }
+
+        // Verificar que el perfil siga activo en Supabase
+        const { data: profileData, error: profileErr } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', currentUser.id)
+          .maybeSingle();
+
+        if (profileErr || !profileData) {
+          console.warn('Cuenta no encontrada o inactiva en Supabase');
+          await signOut();
+          return;
+        }
+
+        // Revalidación exitosa: actualizar fecha y perfil local
+        localStorage.setItem(LAST_ONLINE_VERIFY_KEY, now.toString());
+        setProfile(profileData);
+        localStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(profileData));
+      } catch (err) {
+        console.warn('Error en la verificación periódica de cuenta:', err);
+      }
     }
   };
 
@@ -79,13 +125,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
+        verifySessionOnline();
       } else {
-        // Revisar si había sesión offline de contingencia
+        // En modo offline, si hay un perfil en caché guardado del login anterior, mantenerlo
         try {
-          const offSession = localStorage.getItem(OFFLINE_SESSION_KEY);
-          if (offSession) {
-            const parsed = JSON.parse(offSession);
-            setProfile(parsed);
+          const cachedProfile = localStorage.getItem(LOCAL_PROFILE_KEY);
+          if (cachedProfile) {
+            setProfile(JSON.parse(cachedProfile));
+          } else {
+            // Revisar si había sesión offline de contingencia
+            const offSession = localStorage.getItem(OFFLINE_SESSION_KEY);
+            if (offSession) {
+              setProfile(JSON.parse(offSession));
+            }
           }
         } catch {
           // ignore
@@ -102,10 +154,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fetchProfile(session.user.id);
         localStorage.removeItem(OFFLINE_SESSION_KEY);
       } else {
+        // Si no hay sesión activa y no hay conexión a internet, NO borrar el perfil local
+        // Solo borrarlo si el usuario explícitamente cerró sesión o si no hay caché
+        const isCurrentlyOffline = !navigator.onLine;
+        const cachedProfile = localStorage.getItem(LOCAL_PROFILE_KEY);
         const offSession = localStorage.getItem(OFFLINE_SESSION_KEY);
-        if (!offSession) {
+
+        if (isCurrentlyOffline && (cachedProfile || offSession)) {
+          // Modo offline: se preserva la sesión guardada localmente
+        } else if (!offSession && !cachedProfile) {
           setProfile(null);
-          localStorage.removeItem(LOCAL_PROFILE_KEY);
         }
       }
       setLoading(false);
@@ -204,6 +262,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setProfile(null);
     localStorage.removeItem(LOCAL_PROFILE_KEY);
     localStorage.removeItem(OFFLINE_SESSION_KEY);
+    localStorage.removeItem(LAST_ONLINE_VERIFY_KEY);
   };
 
   return (

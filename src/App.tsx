@@ -14,7 +14,7 @@ import {
   Camera,
   Image as ImageIcon
 } from 'lucide-react';
-import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard } from './db';
+import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard, type DrillStatusRecord } from './db';
 import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -70,6 +70,15 @@ const compressImage = (file: File): Promise<string> => {
 };
 
 
+// Utilidad para convertir texto con coma o punto a número decimal
+const parseDecimal = (val: string | number | undefined | null): number => {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const normalized = String(val).trim().replace(',', '.');
+  const num = parseFloat(normalized);
+  return isNaN(num) ? 0 : num;
+};
+
 // Utilidad para cargar una imagen desde public/ como Base64 para usarla en jsPDF
 export const loadImageForPDF = async (url: string): Promise<{ data: string, width: number, height: number } | null> => {
   try {
@@ -109,7 +118,23 @@ const App: React.FC = () => {
   });
   const [pendingCount, setPendingCount] = useState(0);
   const { profile, loading: authLoading } = useAuth();
-  const [currentPage, setCurrentPage] = useState<'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros' | 'checklist' | 'admin'>('reporte');
+  const [currentPage, setCurrentPage] = useState<'inicio' | 'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros' | 'checklist' | 'admin' | 'estadoPerforadoras'>('inicio');
+
+  // Configuración de Perforadoras y Modelos
+  const DRILL_CONFIG: Record<string, { model: string; defaultPhase?: string }> = {
+    '5': { model: 'PV275' },
+    '6': { model: 'PV275' },
+    '7': { model: 'PV275' },
+    '8': { model: 'ROC L8' },
+    '9': { model: 'MD6540' },
+    '10': { model: 'MD6540' },
+    '11': { model: 'ROC L8' },
+    '12': { model: 'PV275XC' },
+    '13': { model: 'PV275XC' },
+    '14': { model: 'ROC L8' },
+  };
+
+  const [drillStatuses, setDrillStatuses] = useState<Record<string, DrillStatusRecord>>({});
 
   // Estado para Control de Diámetros
   type ComponentMeasurements = { pin?: number; centro?: number; box?: number };
@@ -297,9 +322,26 @@ const App: React.FC = () => {
     };
   }, []);
 
+  // Cargar estados de perforadoras desde IndexedDB
+  const loadDrillStatuses = async () => {
+    try {
+      const records = await db.drillStatuses.toArray();
+      const statusMap: Record<string, DrillStatusRecord> = {};
+      records.forEach(r => {
+        statusMap[r.drillNumber] = r;
+      });
+      setDrillStatuses(statusMap);
+    } catch (err) {
+      console.error('Error cargando estados de perforadoras:', err);
+    }
+  };
+
   // Cargar datos cuando se cambia de página
   useEffect(() => {
-    if (currentPage === 'inventario') {
+    if (currentPage === 'inicio' || currentPage === 'estadoPerforadoras') {
+      loadDrillStatuses();
+      downloadSteelMeasurementsFromSheet();
+    } else if (currentPage === 'inventario') {
       loadLastInventory();
     } else if (currentPage === 'eventos') {
       loadOpenEvents();
@@ -1380,6 +1422,197 @@ const App: React.FC = () => {
         </div>
       </header>
 
+      {/* Nueva Página de Inicio: Resumen de Perforadoras */}
+      {currentPage === 'inicio' && (
+        <main className="container" style={{ paddingBottom: '90px' }}>
+          <section className="card" style={{ marginBottom: '1rem' }}>
+            <div className="card-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Activity size={22} style={{ color: 'var(--primary)' }} />
+                <span style={{ fontSize: '1.1rem', fontWeight: 800 }}>ESTADO PARQUE DE PERFORADORAS</span>
+              </div>
+              {loadingDiameters && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Cargando aceros...</span>}
+            </div>
+            <p style={{ color: 'var(--text-light)', fontSize: '0.85rem', margin: 0 }}>
+              Resumen en tiempo real de operatividad, ubicación (fase) y desgaste de aceros.
+            </p>
+          </section>
+
+          {/* Grid de Perforadoras */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+            gap: '1rem',
+          }}>
+            {['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'].map((drill) => {
+              const cfg = DRILL_CONFIG[drill] || { model: 'N/A' };
+              const st = drillStatuses[drill];
+              const currentStatus = st?.status || 'Operativa';
+              const currentPhase = st?.phase || 'Sin fase';
+
+              // Desgaste de aceros según diametersData
+              const value = diametersData[drill];
+              const isDTHDrill = ['8', '11', '14'].includes(drill);
+
+              const getCompInfo = (val: number | undefined, isMart: boolean) => {
+                if (!val) return null;
+                let v = val < 50 ? val * 25.4 : val;
+                let mn = 0, mx = 0;
+                if (isDTHDrill) {
+                  if (isMart) { mn = 132; mx = 165; }
+                  else { mn = 108; mx = 114.3; }
+                } else if (['5', '6', '7', '12', '13'].includes(drill)) { mn = 194; mx = 219; }
+                else if (['9', '10'].includes(drill)) { mn = 248; mx = 273; }
+
+                let p = ((v - mn) / (mx - mn)) * 100;
+                p = Math.max(0, Math.min(100, p));
+                return { p, v };
+              };
+
+              const percs = [
+                getCompInfo(value?.barras?.[0]?.box, false),
+                getCompInfo(value?.barras?.[1]?.box, false),
+                getCompInfo(value?.adaptador?.centro, isDTHDrill),
+              ].filter(x => x !== null) as { p: number; v: number }[];
+
+              let percentage: number | null = null;
+              if (percs.length > 0) {
+                const worst = percs.reduce((prev, curr) => (curr.p < prev.p) ? curr : prev);
+                percentage = worst.p;
+              }
+
+              // Color del estado de aceros
+              let steelColor = '#6b7280'; // Gris
+              let steelText = 'Sin datos';
+              let steelBg = '#f3f4f6';
+
+              if (percentage !== null) {
+                if (percentage > 66) {
+                  steelColor = '#15803d'; // Verde
+                  steelBg = '#dcfce7';
+                  steelText = `OK (${percentage.toFixed(0)}%)`;
+                } else if (percentage >= 33) {
+                  steelColor = '#b45309'; // Amarillo
+                  steelBg = '#fef3c7';
+                  steelText = `Precaución (${percentage.toFixed(0)}%)`;
+                } else {
+                  steelColor = '#b91c1c'; // Rojo
+                  steelBg = '#fee2e2';
+                  steelText = `Crítico (${percentage.toFixed(0)}%)`;
+                }
+              }
+
+              // Color del Estado del equipo
+              let statusBadgeBg = '#dcfce7';
+              let statusBadgeColor = '#166534';
+              if (currentStatus === 'Mecanica') {
+                statusBadgeBg = '#ffedd5';
+                statusBadgeColor = '#9a3412';
+              } else if (currentStatus === 'Fuera de servicio') {
+                statusBadgeBg = '#fee2e2';
+                statusBadgeColor = '#991b1b';
+              }
+
+              return (
+                <div
+                  key={drill}
+                  className="card"
+                  style={{
+                    padding: '1rem',
+                    marginBottom: 0,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between',
+                    border: '1px solid var(--border)',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                  }}
+                >
+                  {/* Encabezado: Número y Modelo */}
+                  <div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '1.25rem', fontWeight: 900, color: 'var(--secondary)' }}>
+                        P{drill}
+                      </span>
+                      <span style={{
+                        fontSize: '0.7rem',
+                        fontWeight: 700,
+                        backgroundColor: statusBadgeBg,
+                        color: statusBadgeColor,
+                        padding: '0.15rem 0.45rem',
+                        borderRadius: '9999px',
+                      }}>
+                        {currentStatus}
+                      </span>
+                    </div>
+                    <div style={{
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      color: '#475569',
+                      marginTop: '0.15rem',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.03em',
+                    }}>
+                      {cfg.model}
+                    </div>
+                  </div>
+
+                  {/* Detalles: Fase y Aceros */}
+                  <div style={{ marginTop: '0.9rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {/* Fase */}
+                    <div style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      fontSize: '0.78rem',
+                      borderBottom: '1px dashed #e2e8f0',
+                      paddingBottom: '0.3rem',
+                    }}>
+                      <span style={{ color: 'var(--text-muted)' }}>Fase / Ubic:</span>
+                      <strong style={{ color: 'var(--text-main)', maxWidth: '100px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {currentPhase}
+                      </strong>
+                    </div>
+
+                    {/* Aceros con semáforo */}
+                    <div style={{ fontSize: '0.78rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Aceros:</span>
+                        <span style={{
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          backgroundColor: steelBg,
+                          color: steelColor,
+                          padding: '0.1rem 0.4rem',
+                          borderRadius: '4px',
+                        }}>
+                          {steelText}
+                        </span>
+                      </div>
+                      {percentage !== null && (
+                        <div style={{
+                          width: '100%',
+                          height: '5px',
+                          backgroundColor: '#e5e7eb',
+                          borderRadius: '3px',
+                          overflow: 'hidden',
+                        }}>
+                          <div style={{
+                            width: `${percentage}%`,
+                            height: '100%',
+                            backgroundColor: steelColor,
+                            borderRadius: '3px',
+                          }} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </main>
+      )}
+
       {/* Página principal de Reporte */}
       {currentPage === 'reporte' && (
         <main className="container">
@@ -1516,10 +1749,11 @@ const App: React.FC = () => {
                   <div className="form-group">
                     <label style={{ color: 'var(--secondary)' }}>Metros</label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       onFocus={(e) => e.target.select()}
-                      value={item.meters}
-                      onChange={(e) => updateWell(index, 'meters', parseFloat(e.target.value))}
+                      value={item.meters !== undefined && item.meters !== null ? item.meters : ''}
+                      onChange={(e) => updateWell(index, 'meters', parseDecimal(e.target.value))}
                       style={{ borderColor: 'var(--secondary)', background: '#f0f7ff' }}
                     />
                   </div>
@@ -1893,11 +2127,11 @@ const App: React.FC = () => {
             <div className="form-group" style={{ maxWidth: '200px' }}>
               <label>MEDIO (PULG)</label>
               <input
-                type="number"
-                      onFocus={(e) => e.target.select()}
-                step="0.1"
-                value={steelMeasurementData.adaptadorInferiorMedio}
-                onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, adaptadorInferiorMedio: parseFloat(e.target.value) || 0 })}
+                type="text"
+                inputMode="decimal"
+                onFocus={(e) => e.target.select()}
+                value={steelMeasurementData.adaptadorInferiorMedio || ''}
+                onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, adaptadorInferiorMedio: parseDecimal(e.target.value) })}
               />
             </div>
           </section>
@@ -1923,31 +2157,31 @@ const App: React.FC = () => {
               <div className="form-group">
                 <label>SUPERIOR (PULG)</label>
                 <input
-                  type="number"
-                      onFocus={(e) => e.target.select()}
-                  step="0.1"
-                  value={steelMeasurementData.barraPateraSuperior}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraSuperior: parseFloat(e.target.value) || 0 })}
+                  type="text"
+                  inputMode="decimal"
+                  onFocus={(e) => e.target.select()}
+                  value={steelMeasurementData.barraPateraSuperior || ''}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraSuperior: parseDecimal(e.target.value) })}
                 />
               </div>
               <div className="form-group">
                 <label>MEDIO (PULG)</label>
                 <input
-                  type="number"
-                      onFocus={(e) => e.target.select()}
-                  step="0.1"
-                  value={steelMeasurementData.barraPateraMedio}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraMedio: parseFloat(e.target.value) || 0 })}
+                  type="text"
+                  inputMode="decimal"
+                  onFocus={(e) => e.target.select()}
+                  value={steelMeasurementData.barraPateraMedio || ''}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraMedio: parseDecimal(e.target.value) })}
                 />
               </div>
               <div className="form-group">
                 <label style={{ color: 'var(--danger)' }}>INFERIOR (PULG)</label>
                 <input
-                  type="number"
-                      onFocus={(e) => e.target.select()}
-                  step="0.1"
-                  value={steelMeasurementData.barraPateraInferior}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraInferior: parseFloat(e.target.value) || 0 })}
+                  type="text"
+                  inputMode="decimal"
+                  onFocus={(e) => e.target.select()}
+                  value={steelMeasurementData.barraPateraInferior || ''}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraInferior: parseDecimal(e.target.value) })}
                 />
               </div>
             </div>
@@ -1987,39 +2221,39 @@ const App: React.FC = () => {
                   <div className="form-group">
                     <label>SUPERIOR (PULG)</label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       onFocus={(e) => e.target.select()}
-                      step="0.1"
-                      value={steelMeasurementData[supKey] as number}
+                      value={(steelMeasurementData[supKey] as number) || ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [supKey]: parseFloat(e.target.value) || 0
+                        [supKey]: parseDecimal(e.target.value)
                       })}
                     />
                   </div>
                   <div className="form-group">
                     <label>MEDIO (PULG)</label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       onFocus={(e) => e.target.select()}
-                      step="0.1"
-                      value={steelMeasurementData[medKey] as number}
+                      value={(steelMeasurementData[medKey] as number) || ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [medKey]: parseFloat(e.target.value) || 0
+                        [medKey]: parseDecimal(e.target.value)
                       })}
                     />
                   </div>
                   <div className="form-group">
                     <label>INFERIOR (PULG)</label>
                     <input
-                      type="number"
+                      type="text"
+                      inputMode="decimal"
                       onFocus={(e) => e.target.select()}
-                      step="0.1"
-                      value={steelMeasurementData[infKey] as number}
+                      value={(steelMeasurementData[infKey] as number) || ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [infKey]: parseFloat(e.target.value) || 0
+                        [infKey]: parseDecimal(e.target.value)
                       })}
                     />
                   </div>
@@ -2434,6 +2668,26 @@ const App: React.FC = () => {
               <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem' }}>Control de Diámetros</h3>
               <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
                 Estado de desgaste de aceros
+              </p>
+            </section>
+
+            {/* Estado de Perforadoras */}
+            <section
+              className="card"
+              onClick={() => setCurrentPage('estadoPerforadoras')}
+              style={{ cursor: 'pointer', textAlign: 'center', border: '1px solid #3b82f6' }}>
+              <div style={{
+                background: 'rgba(59, 130, 246, 0.12)',
+                borderRadius: '12px',
+                padding: '1rem',
+                display: 'inline-block',
+                marginBottom: '0.5rem'
+              }}>
+                <HardHat size={32} style={{ color: '#2563eb' }} />
+              </div>
+              <h3 style={{ margin: '0.5rem 0 0.25rem', fontSize: '1rem', color: '#1e3a8a' }}>Estado Perforadoras</h3>
+              <p style={{ color: 'var(--text-light)', fontSize: '0.8rem', margin: 0 }}>
+                Actualizar Estado y Fase en terreno
               </p>
             </section>
 
@@ -3226,6 +3480,137 @@ const App: React.FC = () => {
         </main>
       )}
 
+      {/* Página Técnico: Gestión de Estado de Perforadoras */}
+      {currentPage === 'estadoPerforadoras' && (
+        <main className="container" style={{ paddingBottom: '90px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1.5rem', gap: '1rem' }}>
+            <button
+              onClick={() => setCurrentPage('analista')}
+              style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: '0.5rem', fontWeight: 700 }}
+            >
+              ← VOLVER
+            </button>
+            <h2 style={{ margin: 0, color: 'var(--text-dark)', fontSize: '1.25rem' }}>ESTADO DE PERFORADORAS</h2>
+          </div>
+
+          <section className="card" style={{ marginBottom: '1.25rem' }}>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', margin: 0 }}>
+              Actualice el estado operacional (Operativa / Mecánica / Fuera de servicio) y la fase actual de cada equipo. La información se guarda a nivel local y se sincroniza automáticamente con la nube.
+            </p>
+          </section>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+            {['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'].map((drill) => {
+              const cfg = DRILL_CONFIG[drill] || { model: 'N/A' };
+              const current = drillStatuses[drill] || {
+                drillNumber: drill,
+                model: cfg.model,
+                status: 'Operativa',
+                phase: '',
+                updatedAt: Date.now(),
+                synced: 0,
+              };
+
+              const handleUpdate = async (field: 'status' | 'phase', val: string) => {
+                const updated: DrillStatusRecord = {
+                  ...current,
+                  drillNumber: drill,
+                  model: cfg.model,
+                  [field]: val,
+                  updatedAt: Date.now(),
+                  updatedBy: profile?.full_name || profile?.email || 'Técnico',
+                  synced: 0,
+                };
+
+                // Guardar en estado local
+                setDrillStatuses(prev => ({ ...prev, [drill]: updated }));
+
+                // Guardar en Dexie IndexedDB
+                try {
+                  const existing = await db.drillStatuses.where('drillNumber').equals(drill).first();
+                  if (existing?.id) {
+                    await db.drillStatuses.update(existing.id, updated);
+                  } else {
+                    await db.drillStatuses.add(updated);
+                  }
+                  setPendingCount(await getTotalPendingCount());
+                } catch (e) {
+                  console.error('Error guardando estado de perforadora en local:', e);
+                }
+              };
+
+              return (
+                <section
+                  key={drill}
+                  className="card"
+                  style={{
+                    padding: '1rem',
+                    marginBottom: 0,
+                    border: '1px solid var(--border)',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                    <div>
+                      <span style={{ fontSize: '1.2rem', fontWeight: 800, color: 'var(--secondary)' }}>
+                        Perforadora {drill}
+                      </span>
+                      <span style={{ fontSize: '0.78rem', color: '#64748b', marginLeft: '0.5rem', fontWeight: 600 }}>
+                        ({cfg.model})
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="form-grid" style={{ gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 700 }}>Estado Operacional</label>
+                      <select
+                        value={current.status}
+                        onChange={(e) => handleUpdate('status', e.target.value as any)}
+                        style={{
+                          padding: '0.5rem',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          fontSize: '0.85rem',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <option value="Operativa">Operativa</option>
+                        <option value="Mecanica">Mecánica</option>
+                        <option value="Fuera de servicio">Fuera de servicio</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label style={{ fontSize: '0.78rem', fontWeight: 700 }}>Fase / Ubicación</label>
+                      <input
+                        type="text"
+                        placeholder="Ej: Fase 6, Banco 2800"
+                        value={current.phase || ''}
+                        onChange={(e) => handleUpdate('phase', e.target.value)}
+                        style={{
+                          padding: '0.5rem',
+                          borderRadius: '6px',
+                          border: '1px solid #cbd5e1',
+                          fontSize: '0.85rem',
+                        }}
+                      />
+                    </div>
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+
+          <button
+            className="btn-add"
+            onClick={() => setCurrentPage('analista')}
+            style={{ marginTop: '1.5rem', width: '100%', padding: '0.75rem' }}
+          >
+            ← VOLVER AL PANEL TÉCNICO
+          </button>
+        </main>
+      )}
+
       {/* Panel Privado Administrador */}
       {currentPage === 'admin' && (
         <AdminPanel onBack={() => setCurrentPage('analista')} />
@@ -3234,11 +3619,19 @@ const App: React.FC = () => {
       <nav className="bottom-nav">
         <a
           href="#"
-          className={`nav-item ${currentPage === 'reporte' ? 'active' : ''}`}
-          onClick={(e) => { e.preventDefault(); setCurrentPage('reporte'); }}
+          className={`nav-item ${currentPage === 'inicio' ? 'active' : ''}`}
+          onClick={(e) => { e.preventDefault(); setCurrentPage('inicio'); }}
         >
           <Home size={24} />
           <span>Inicio</span>
+        </a>
+        <a
+          href="#"
+          className={`nav-item ${currentPage === 'reporte' ? 'active' : ''}`}
+          onClick={(e) => { e.preventDefault(); setCurrentPage('reporte'); }}
+        >
+          <ClipboardList size={24} />
+          <span>Reporte</span>
         </a>
         <a
           href="#"
@@ -3266,7 +3659,7 @@ const App: React.FC = () => {
         </a>
         <a
           href="#"
-          className={`nav-item ${currentPage === 'analista' || currentPage === 'inventario' ? 'active' : ''}`}
+          className={`nav-item ${currentPage === 'analista' || currentPage === 'inventario' || currentPage === 'estadoPerforadoras' ? 'active' : ''}`}
           onClick={(e) => { e.preventDefault(); setCurrentPage('analista'); }}
         >
           <FileText size={24} />

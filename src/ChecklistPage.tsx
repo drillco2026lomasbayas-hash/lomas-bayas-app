@@ -437,7 +437,14 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
             <div style={{ display: 'flex', gap: '1rem' }}>
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.3rem' }}>Horómetro *</label>
-                <input type="number" value={horometro} onChange={e => setHorometro(e.target.value)} placeholder="0.0" style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }} />
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={horometro}
+                  onChange={e => setHorometro(e.target.value.replace(',', '.'))}
+                  placeholder="0.0"
+                  style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }}
+                />
               </div>
               <div style={{ flex: 1 }}>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 'bold', marginBottom: '0.3rem' }}>Operador *</label>

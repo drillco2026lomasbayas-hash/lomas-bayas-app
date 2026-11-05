@@ -140,10 +140,22 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
         format: 'a4',
       });
       
-      const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      // Ajuste proporcional para que quepa en la hoja sin cortarse por abajo
+      const widthRatio = pageWidth / canvas.width;
+      const heightRatio = pageHeight / canvas.height;
+      const ratio = Math.min(widthRatio, heightRatio);
+
+      const renderWidth = canvas.width * ratio;
+      const renderHeight = canvas.height * ratio;
+
+      // Centrar en la página
+      const posX = (pageWidth - renderWidth) / 2;
+      const posY = (pageHeight - renderHeight) / 2;
+
+      pdf.addImage(imgData, 'JPEG', posX, posY, renderWidth, renderHeight);
       pdf.save(`Reporte_Perforadora_PE${drill}.pdf`);
     } catch (error) {
       console.error('Error al generar PDF:', error);
@@ -272,7 +284,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
 
         {/* Contenido del Reporte Scrollable */}
         <div style={{ overflowY: 'auto', padding: '1rem', background: '#e9ecef' }}>
-          <div ref={reportRef} style={{ background: 'white', padding: '2rem', width: isDTH ? '297mm' : '210mm', minHeight: isDTH ? '210mm' : '297mm', margin: '0 auto', boxSizing: 'border-box' }}>
+          <div ref={reportRef} style={{ background: 'white', padding: isDTH ? '1.2rem 1.5rem' : '2rem', width: isDTH ? '297mm' : '210mm', minHeight: isDTH ? '210mm' : '297mm', margin: '0 auto', boxSizing: 'border-box' }}>
             
             {/* Header del Reporte */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -281,7 +293,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
               <img src="/lomasbayas.png" alt="Codelco" style={{ height: '40px' }} crossOrigin="anonymous" />
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between', background: '#0b2b45', color: 'white', padding: '0.5rem', borderRadius: '4px', marginBottom: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', background: '#0b2b45', color: 'white', padding: '0.5rem', borderRadius: '4px', marginBottom: isDTH ? '1rem' : '2rem' }}>
               <div style={{ fontWeight: 'bold', paddingLeft: '0.5rem' }}>
                 MEDICION DE BARRAS Y {isDTH ? 'MARTILLO' : 'ADAPTADOR DE TRICONO'}<br/>
                 {isDTH ? 'DTH DRILLING TOOLS' : 'ROTARY DRILLING TOOLS'}
@@ -297,7 +309,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
             </div>
 
             {/* Columnas Gráficas */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', gap: isDTH ? '1rem' : '2rem', marginBottom: '2rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: isDTH ? '0.75rem' : '2rem', marginBottom: isDTH ? '1rem' : '2rem' }}>
               {barrasToRender.map((barraData, idx) => (
                 <React.Fragment key={`barra-${idx}`}>
                   {renderComponentColumn(`BARRA ${idx + 1}`, isDTH ? '/barra_dth.png' : '/barra_rotary.png', barraData)}
@@ -381,10 +393,11 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
                         <td style={{ borderRight: '2px solid #000', padding: '0.2rem' }}>
                           <input
                             type="text"
+                            inputMode="decimal"
                             value={editCambiosBarras[idx]?.metros ?? ''}
                             onChange={(e) => {
                               const updated = [...editCambiosBarras];
-                              updated[idx] = { ...updated[idx], metros: e.target.value };
+                              updated[idx] = { ...updated[idx], metros: e.target.value.replace(',', '.') };
                               setEditCambiosBarras(updated);
                             }}
                             style={{ width: '100%', textAlign: 'center', border: '1px solid #ccc', borderRadius: '4px', padding: '0.2rem', fontSize: 'inherit', boxSizing: 'border-box' }}
@@ -414,8 +427,9 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
                     <td style={{ borderRight: '2px solid #000', padding: '0.2rem' }}>
                       <input
                         type="text"
+                        inputMode="decimal"
                         value={editCambiosAdaptador.metros ?? ''}
-                        onChange={(e) => setEditCambiosAdaptador({ ...editCambiosAdaptador, metros: e.target.value })}
+                        onChange={(e) => setEditCambiosAdaptador({ ...editCambiosAdaptador, metros: e.target.value.replace(',', '.') })}
                         style={{ width: '100%', textAlign: 'center', border: '1px solid #ccc', borderRadius: '4px', padding: '0.2rem', fontSize: 'inherit', boxSizing: 'border-box' }}
                         placeholder="Metros"
                       />
@@ -437,7 +451,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
             </div>
             
             {/* Pie de informe */}
-            <div style={{ marginTop: 'auto', paddingTop: '2rem', display: 'flex', justifyContent: 'center' }}>
+            <div style={{ marginTop: 'auto', paddingTop: isDTH ? '0.75rem' : '2rem', display: 'flex', justifyContent: 'center' }}>
                <img src="/pie de informe.png" alt="Footer" style={{ width: '100%', maxWidth: '800px', objectFit: 'contain' }} crossOrigin="anonymous" />
             </div>
 

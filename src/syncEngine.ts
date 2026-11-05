@@ -63,7 +63,7 @@ class SyncEngine {
   // Cuenta cuántos registros locales están pendientes de sincronizar
   public async getPendingCount(): Promise<number> {
     try {
-      const [r, sc, sm, ev, inv, disc, chk, del] = await Promise.all([
+      const [r, sc, sm, ev, inv, disc, chk, del, ds] = await Promise.all([
         db.reports.where('synced').equals(0).count(),
         db.steelChanges.where('synced').equals(0).count(),
         db.steelMeasurements.where('synced').equals(0).count(),
@@ -72,8 +72,9 @@ class SyncEngine {
         db.steelDiscards.where('synced').equals(0).count(),
         db.checklists.where('synced').equals(0).count(),
         db.pendingDeletions.where('synced').equals(0).count(),
+        db.drillStatuses.where('synced').equals(0).count(),
       ]);
-      return r + sc + sm + ev + inv + disc + chk + del;
+      return r + sc + sm + ev + inv + disc + chk + del + ds;
     } catch {
       return 0;
     }
@@ -334,6 +335,51 @@ class SyncEngine {
         if (!error && chk.id) {
           await db.checklists.update(chk.id, { synced: 1 });
         }
+      }
+
+      // 8.5. Sincronizar ESTADO DE PERFORADORAS (drill_statuses)
+      const pendingStatuses = await db.drillStatuses.where('synced').equals(0).toArray();
+      for (const st of pendingStatuses) {
+        const payload = {
+          drill_number: st.drillNumber,
+          model: st.model,
+          status: st.status,
+          phase: st.phase,
+          user_id: userId,
+          updated_at: new Date(st.updatedAt).toISOString(),
+        };
+
+        const { error } = await supabase.from('drill_statuses').upsert(payload, { onConflict: 'drill_number' });
+        if (!error && st.id) {
+          await db.drillStatuses.update(st.id, { synced: 1 });
+        }
+      }
+
+      // Descargar estados remotos de perforadoras si existen
+      try {
+        const { data: remoteStatuses } = await supabase
+          .from('drill_statuses')
+          .select('*');
+
+        if (remoteStatuses && remoteStatuses.length > 0) {
+          for (const rs of remoteStatuses) {
+            const local = await db.drillStatuses.where('drillNumber').equals(rs.drill_number).first();
+            const remoteTime = new Date(rs.updated_at).getTime();
+            if (!local || (local.updatedAt < remoteTime && local.synced === 1)) {
+              await db.drillStatuses.put({
+                id: local?.id,
+                drillNumber: rs.drill_number,
+                model: rs.model,
+                status: rs.status,
+                phase: rs.phase,
+                updatedAt: remoteTime,
+                synced: 1,
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Pull de drill_statuses omitido:', err);
       }
 
       // 9. DESCARGA / PULL DE NOVEDADES REMOTAS (por ejemplo, eventos creados por otros)
