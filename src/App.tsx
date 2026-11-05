@@ -22,6 +22,7 @@ import './index.css';
 import DrillReportModal from './DrillReportModal';
 import { ChecklistPage } from './ChecklistPage';
 import { SyncStatusBar } from './SyncStatusBar';
+import { syncEngine } from './syncEngine';
 import { useAuth } from './AuthContext';
 import { LoginView } from './LoginView';
 import { AdminPanel } from './AdminPanel';
@@ -135,6 +136,8 @@ const App: React.FC = () => {
   };
 
   const [drillStatuses, setDrillStatuses] = useState<Record<string, DrillStatusRecord>>({});
+  const [savingDrillStatuses, setSavingDrillStatuses] = useState(false);
+  const [drillStatusesSavedSuccess, setDrillStatusesSavedSuccess] = useState(false);
 
   // Estado para Control de Diámetros
   type ComponentMeasurements = { pin?: number; centro?: number; box?: number };
@@ -3601,13 +3604,63 @@ const App: React.FC = () => {
             })}
           </div>
 
-          <button
-            className="btn-add"
-            onClick={() => setCurrentPage('analista')}
-            style={{ marginTop: '1.5rem', width: '100%', padding: '0.75rem' }}
-          >
-            ← VOLVER AL PANEL TÉCNICO
-          </button>
+          {/* Botones Guardar y Volver */}
+          <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', marginBottom: '1rem' }}>
+            <button
+              className="btn-add"
+              onClick={() => setCurrentPage('analista')}
+              style={{ flex: 1, padding: '0.85rem' }}
+            >
+              ← VOLVER
+            </button>
+            <button
+              className={`btn-save ${drillStatusesSavedSuccess ? 'pulse-green' : ''}`}
+              disabled={savingDrillStatuses}
+              onClick={async () => {
+                setSavingDrillStatuses(true);
+                try {
+                  // 1. Guardar todos los estados en Dexie
+                  const drills = ['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'];
+                  for (const drill of drills) {
+                    const cfg = DRILL_CONFIG[drill] || { model: 'N/A' };
+                    const current = drillStatuses[drill] || {
+                      drillNumber: drill,
+                      model: cfg.model,
+                      status: 'Operativa',
+                      phase: '',
+                      updatedAt: Date.now(),
+                      synced: 0,
+                    };
+                    const existing = await db.drillStatuses.where('drillNumber').equals(drill).first();
+                    if (existing?.id) {
+                      await db.drillStatuses.update(existing.id, { ...current, synced: 0 });
+                    } else {
+                      await db.drillStatuses.add({ ...current, synced: 0 });
+                    }
+                  }
+
+                  // 2. Sincronizar inmediatamente con Supabase si hay conexión
+                  if (navigator.onLine) {
+                    await syncEngine.syncAll();
+                  }
+
+                  setPendingCount(await getTotalPendingCount());
+                  setDrillStatusesSavedSuccess(true);
+                  setTimeout(() => setDrillStatusesSavedSuccess(false), 2500);
+                  alert(navigator.onLine ? '¡Estados de perforadoras guardados y sincronizados con Supabase!' : 'Guardado en modo sin conexión. Se sincronizará al detectar internet.');
+                } catch (err) {
+                  console.error('Error guardando estados de perforadoras:', err);
+                  alert('Error al guardar los estados.');
+                } finally {
+                  setSavingDrillStatuses(false);
+                }
+              }}
+              style={{ flex: 2, padding: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem', fontSize: '1rem' }}
+            >
+              <Save size={20} />
+              <span>{savingDrillStatuses ? 'GUARDANDO...' : (drillStatusesSavedSuccess ? '¡GUARDADO!' : 'GUARDAR Y SINCRONIZAR')}</span>
+            </button>
+          </div>
         </main>
       )}
 
