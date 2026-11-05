@@ -126,12 +126,72 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
 
   const generatePDF = async () => {
     if (!reportRef.current) return;
+    const target = reportRef.current;
+    const scrollContainer = target.parentElement as HTMLElement | null;
+    const modalContainer = scrollContainer?.parentElement as HTMLElement | null;
+
+    // Guardar estilos y posiciones originales para restaurarlos después
+    const prevScrollTop = scrollContainer ? scrollContainer.scrollTop : 0;
+    const prevScrollOverflowY = scrollContainer ? scrollContainer.style.overflowY : '';
+    const prevScrollMaxHeight = scrollContainer ? scrollContainer.style.maxHeight : '';
+    const prevScrollHeight = scrollContainer ? scrollContainer.style.height : '';
+
+    const prevModalOverflow = modalContainer ? modalContainer.style.overflow : '';
+    const prevModalMaxHeight = modalContainer ? modalContainer.style.maxHeight : '';
+    const prevModalHeight = modalContainer ? modalContainer.style.height : '';
+
     try {
       setGeneratingPDF(true);
-      const canvas = await html2canvas(reportRef.current, {
+
+      // Desactivar temporalmente restricciones de overflow y altura en el DOM en vivo
+      if (scrollContainer) {
+        scrollContainer.scrollTop = 0;
+        scrollContainer.style.overflowY = 'visible';
+        scrollContainer.style.maxHeight = 'none';
+        scrollContainer.style.height = 'auto';
+      }
+      if (modalContainer) {
+        modalContainer.style.overflow = 'visible';
+        modalContainer.style.maxHeight = 'none';
+        modalContainer.style.height = 'auto';
+      }
+
+      // Pequeño respiro para que el navegador procese el reflow completo
+      await new Promise(resolve => setTimeout(resolve, 80));
+
+      const canvas = await html2canvas(target, {
         scale: 2,
         useCORS: true,
         logging: false,
+        width: target.scrollWidth,
+        height: target.scrollHeight,
+        windowWidth: target.scrollWidth + 100,
+        windowHeight: target.scrollHeight + 100,
+        scrollX: 0,
+        scrollY: 0,
+        onclone: (clonedDoc) => {
+          // Asegurar que en el documento clonado nada restrinja la visualización
+          const clonedTarget = clonedDoc.querySelector('[data-drill-report]') as HTMLElement;
+          if (clonedTarget) {
+            let curr: HTMLElement | null = clonedTarget.parentElement;
+            while (curr && curr !== clonedDoc.body) {
+              curr.style.overflow = 'visible';
+              curr.style.maxHeight = 'none';
+              curr.style.height = 'auto';
+              curr = curr.parentElement;
+            }
+
+            // Copiar valores de inputs en vivo al DOM clonado
+            const origInputs = target.querySelectorAll('input');
+            const clonedInputs = clonedTarget.querySelectorAll('input');
+            origInputs.forEach((orig, idx) => {
+              if (clonedInputs[idx]) {
+                clonedInputs[idx].value = orig.value;
+                clonedInputs[idx].setAttribute('value', orig.value);
+              }
+            });
+          }
+        }
       });
       const imgData = canvas.toDataURL('image/jpeg', 1.0);
       const pdf = new jsPDF({
@@ -161,6 +221,18 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
       console.error('Error al generar PDF:', error);
       alert('Hubo un error al generar el PDF.');
     } finally {
+      // Restaurar estilos originales y scroll del contenedor modal
+      if (scrollContainer) {
+        scrollContainer.style.overflowY = prevScrollOverflowY;
+        scrollContainer.style.maxHeight = prevScrollMaxHeight;
+        scrollContainer.style.height = prevScrollHeight;
+        scrollContainer.scrollTop = prevScrollTop;
+      }
+      if (modalContainer) {
+        modalContainer.style.overflow = prevModalOverflow;
+        modalContainer.style.maxHeight = prevModalMaxHeight;
+        modalContainer.style.height = prevModalHeight;
+      }
       setGeneratingPDF(false);
     }
   };
@@ -284,7 +356,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
 
         {/* Contenido del Reporte Scrollable */}
         <div style={{ overflowY: 'auto', padding: '1rem', background: '#e9ecef' }}>
-          <div ref={reportRef} style={{ background: 'white', padding: isDTH ? '1.2rem 1.5rem' : '2rem', width: isDTH ? '297mm' : '210mm', minHeight: isDTH ? '210mm' : '297mm', margin: '0 auto', boxSizing: 'border-box' }}>
+          <div ref={reportRef} data-drill-report="true" style={{ background: 'white', padding: isDTH ? '1.2rem 1.5rem' : '2rem', width: isDTH ? '297mm' : '210mm', minHeight: isDTH ? '210mm' : '297mm', margin: '0 auto', boxSizing: 'border-box' }}>
             
             {/* Header del Reporte */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>

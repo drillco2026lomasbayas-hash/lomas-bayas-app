@@ -71,7 +71,23 @@ const compressImage = (file: File): Promise<string> => {
 };
 
 
-// Utilidad para convertir texto con coma o punto a número decimal
+// Sanitiza el texto mientras se escribe: permite solo dígitos y un único separador (punto o coma)
+const cleanDecimalInput = (raw: string): string => {
+  if (!raw) return '';
+  // Elimina caracteres que no sean dígitos, punto o coma
+  let s = raw.replace(/[^0-9.,]/g, '');
+  // Encuentra la primera coma o punto
+  const firstSepIdx = s.search(/[.,]/);
+  if (firstSepIdx !== -1) {
+    const sepChar = s[firstSepIdx];
+    const before = s.slice(0, firstSepIdx).replace(/[.,]/g, '');
+    const after = s.slice(firstSepIdx + 1).replace(/[.,]/g, '');
+    return `${before}${sepChar}${after}`;
+  }
+  return s;
+};
+
+// Convierte cualquier valor a número (soportando coma o punto)
 const parseDecimal = (val: string | number | undefined | null): number => {
   if (val === undefined || val === null || val === '') return 0;
   if (typeof val === 'number') return isNaN(val) ? 0 : val;
@@ -413,14 +429,17 @@ const App: React.FC = () => {
     setWells(updatedWells);
   };
 
-  const totalMeters = wells.reduce((sum, item) => sum + (item.type === 'well' ? (item.meters || 0) : 0), 0);
+  const totalMeters = wells.reduce((sum, item) => sum + (item.type === 'well' ? parseDecimal(item.meters) : 0), 0);
   const totalDelays = wells.reduce((sum, item) => sum + (item.type === 'delay' ? (item.timeMin || 0) : 0), 0);
 
   const handleSave = async () => {
     try {
       const recordToSave = {
         ...reportData,
-        wells,
+        wells: wells.map(w => ({
+          ...w,
+          meters: w.type === 'well' ? parseDecimal(w.meters) : 0,
+        })),
         synced: 0,
         createdAt: Date.now()
       };
@@ -592,7 +611,29 @@ const App: React.FC = () => {
   const handleSaveSteelMeasurement = async () => {
     try {
       const record: Omit<SteelMeasurement, 'id'> = {
-        ...steelMeasurementData,
+        date: steelMeasurementData.date,
+        shift: steelMeasurementData.shift,
+        drillNumber: steelMeasurementData.drillNumber,
+        adaptadorInferiorMedio: parseDecimal(steelMeasurementData.adaptadorInferiorMedio),
+        barraPateraSuperior: parseDecimal(steelMeasurementData.barraPateraSuperior),
+        barraPateraMedio: parseDecimal(steelMeasurementData.barraPateraMedio),
+        barraPateraInferior: parseDecimal(steelMeasurementData.barraPateraInferior),
+        barraSeguidora1Superior: parseDecimal(steelMeasurementData.barraSeguidora1Superior),
+        barraSeguidora1Medio: parseDecimal(steelMeasurementData.barraSeguidora1Medio),
+        barraSeguidora1Inferior: parseDecimal(steelMeasurementData.barraSeguidora1Inferior),
+        barraSeguidora2Superior: parseDecimal(steelMeasurementData.barraSeguidora2Superior),
+        barraSeguidora2Medio: parseDecimal(steelMeasurementData.barraSeguidora2Medio),
+        barraSeguidora2Inferior: parseDecimal(steelMeasurementData.barraSeguidora2Inferior),
+        barraSeguidora3Superior: parseDecimal(steelMeasurementData.barraSeguidora3Superior),
+        barraSeguidora3Medio: parseDecimal(steelMeasurementData.barraSeguidora3Medio),
+        barraSeguidora3Inferior: parseDecimal(steelMeasurementData.barraSeguidora3Inferior),
+        barraSeguidora4Superior: parseDecimal(steelMeasurementData.barraSeguidora4Superior),
+        barraSeguidora4Medio: parseDecimal(steelMeasurementData.barraSeguidora4Medio),
+        barraSeguidora4Inferior: parseDecimal(steelMeasurementData.barraSeguidora4Inferior),
+        barraSeguidora5Superior: parseDecimal(steelMeasurementData.barraSeguidora5Superior),
+        barraSeguidora5Medio: parseDecimal(steelMeasurementData.barraSeguidora5Medio),
+        barraSeguidora5Inferior: parseDecimal(steelMeasurementData.barraSeguidora5Inferior),
+        comentarios: steelMeasurementData.comentarios || '',
         synced: 0,
         createdAt: Date.now()
       };
@@ -1755,8 +1796,8 @@ const App: React.FC = () => {
                       type="text"
                       inputMode="decimal"
                       onFocus={(e) => e.target.select()}
-                      value={item.meters !== undefined && item.meters !== null ? item.meters : ''}
-                      onChange={(e) => updateWell(index, 'meters', parseDecimal(e.target.value))}
+                      value={item.meters !== undefined && item.meters !== null ? String(item.meters) : ''}
+                      onChange={(e) => updateWell(index, 'meters', cleanDecimalInput(e.target.value))}
                       style={{ borderColor: 'var(--secondary)', background: '#f0f7ff' }}
                     />
                   </div>
@@ -2133,8 +2174,8 @@ const App: React.FC = () => {
                 type="text"
                 inputMode="decimal"
                 onFocus={(e) => e.target.select()}
-                value={steelMeasurementData.adaptadorInferiorMedio || ''}
-                onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, adaptadorInferiorMedio: parseDecimal(e.target.value) })}
+                value={steelMeasurementData.adaptadorInferiorMedio !== undefined && steelMeasurementData.adaptadorInferiorMedio !== null ? String(steelMeasurementData.adaptadorInferiorMedio) : ''}
+                onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, adaptadorInferiorMedio: cleanDecimalInput(e.target.value) as any })}
               />
             </div>
           </section>
@@ -2163,8 +2204,8 @@ const App: React.FC = () => {
                   type="text"
                   inputMode="decimal"
                   onFocus={(e) => e.target.select()}
-                  value={steelMeasurementData.barraPateraSuperior || ''}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraSuperior: parseDecimal(e.target.value) })}
+                  value={steelMeasurementData.barraPateraSuperior !== undefined && steelMeasurementData.barraPateraSuperior !== null ? String(steelMeasurementData.barraPateraSuperior) : ''}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraSuperior: cleanDecimalInput(e.target.value) as any })}
                 />
               </div>
               <div className="form-group">
@@ -2173,8 +2214,8 @@ const App: React.FC = () => {
                   type="text"
                   inputMode="decimal"
                   onFocus={(e) => e.target.select()}
-                  value={steelMeasurementData.barraPateraMedio || ''}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraMedio: parseDecimal(e.target.value) })}
+                  value={steelMeasurementData.barraPateraMedio !== undefined && steelMeasurementData.barraPateraMedio !== null ? String(steelMeasurementData.barraPateraMedio) : ''}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraMedio: cleanDecimalInput(e.target.value) as any })}
                 />
               </div>
               <div className="form-group">
@@ -2183,8 +2224,8 @@ const App: React.FC = () => {
                   type="text"
                   inputMode="decimal"
                   onFocus={(e) => e.target.select()}
-                  value={steelMeasurementData.barraPateraInferior || ''}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraInferior: parseDecimal(e.target.value) })}
+                  value={steelMeasurementData.barraPateraInferior !== undefined && steelMeasurementData.barraPateraInferior !== null ? String(steelMeasurementData.barraPateraInferior) : ''}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraInferior: cleanDecimalInput(e.target.value) as any })}
                 />
               </div>
             </div>
@@ -2227,10 +2268,10 @@ const App: React.FC = () => {
                       type="text"
                       inputMode="decimal"
                       onFocus={(e) => e.target.select()}
-                      value={(steelMeasurementData[supKey] as number) || ''}
+                      value={steelMeasurementData[supKey] !== undefined && steelMeasurementData[supKey] !== null ? String(steelMeasurementData[supKey]) : ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [supKey]: parseDecimal(e.target.value)
+                        [supKey]: cleanDecimalInput(e.target.value) as any
                       })}
                     />
                   </div>
@@ -2240,10 +2281,10 @@ const App: React.FC = () => {
                       type="text"
                       inputMode="decimal"
                       onFocus={(e) => e.target.select()}
-                      value={(steelMeasurementData[medKey] as number) || ''}
+                      value={steelMeasurementData[medKey] !== undefined && steelMeasurementData[medKey] !== null ? String(steelMeasurementData[medKey]) : ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [medKey]: parseDecimal(e.target.value)
+                        [medKey]: cleanDecimalInput(e.target.value) as any
                       })}
                     />
                   </div>
@@ -2253,10 +2294,10 @@ const App: React.FC = () => {
                       type="text"
                       inputMode="decimal"
                       onFocus={(e) => e.target.select()}
-                      value={(steelMeasurementData[infKey] as number) || ''}
+                      value={steelMeasurementData[infKey] !== undefined && steelMeasurementData[infKey] !== null ? String(steelMeasurementData[infKey]) : ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [infKey]: parseDecimal(e.target.value)
+                        [infKey]: cleanDecimalInput(e.target.value) as any
                       })}
                     />
                   </div>

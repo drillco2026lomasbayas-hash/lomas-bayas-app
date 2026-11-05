@@ -441,7 +441,18 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
                   type="text"
                   inputMode="decimal"
                   value={horometro}
-                  onChange={e => setHorometro(e.target.value.replace(',', '.'))}
+                  onChange={e => {
+                    const raw = e.target.value.replace(/[^0-9.,]/g, '');
+                    const firstSep = raw.search(/[.,]/);
+                    if (firstSep !== -1) {
+                      const sep = raw[firstSep];
+                      const before = raw.slice(0, firstSep).replace(/[.,]/g, '');
+                      const after = raw.slice(firstSep + 1).replace(/[.,]/g, '');
+                      setHorometro(`${before}${sep}${after}`);
+                    } else {
+                      setHorometro(raw);
+                    }
+                  }}
                   placeholder="0.0"
                   style={{ width: '100%', padding: '0.5rem', borderRadius: '4px', border: '1px solid #ccc' }}
                 />
