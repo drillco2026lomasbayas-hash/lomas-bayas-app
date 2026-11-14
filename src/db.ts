@@ -30,6 +30,8 @@ export interface ShiftReport {
   triconeDiameter: string;
   wells: WellRecord[];
   synced: number;
+  syncedGas?: number;
+  syncedSupabase?: number;
   createdAt: number;
 }
 
@@ -42,6 +44,8 @@ export interface SteelChange {
   serialNumber: string;
   comments: string;
   synced: number;
+  syncedGas?: number;
+  syncedSupabase?: number;
   createdAt: number;
 }
 
@@ -75,6 +79,8 @@ export interface SteelMeasurement {
   barraSeguidora5Inferior?: number;
   comentarios?: string;
   synced: number;
+  syncedGas?: number;
+  syncedSupabase?: number;
   createdAt: number;
 }
 
@@ -87,6 +93,8 @@ export interface Event {
   photo?: string;
   closed: number;
   synced: number;
+  syncedGas?: number;
+  syncedSupabase?: number;
   createdAt: number;
 }
 
@@ -156,6 +164,8 @@ export interface InventoryRecord {
   pe1213_deckBushing_central: number;
   pe1213_deckBushing_mina: number;
   synced: number;
+  syncedGas?: number;
+  syncedSupabase?: number;
   createdAt: number;
 }
 
@@ -210,6 +220,8 @@ export interface SteelDiscard {
   obsConos?: string;
   obsSerie?: string;
   synced: number;
+  syncedGas?: number;
+  syncedSupabase?: number;
   createdAt: number;
 }
 
@@ -224,6 +236,8 @@ export interface ChecklistRecord {
   obsAceros: string;
   items: Record<string, string>; // e.g. "Manómetro Presión Rotación": "Bueno | Fuga leve"
   synced: number;
+  syncedGas?: number;
+  syncedSupabase?: number;
   createdAt: number;
 }
 
@@ -260,6 +274,17 @@ export class LomasBayasDB extends Dexie {
       pendingDeletions: '++id, type, recordId, synced, createdAt',
       steelDiscards: '++id, date, tipoAcero, synced, createdAt',
       checklists: '++id, date, type, synced, createdAt',
+      drillStatuses: '++id, drillNumber, status, phase, synced, updatedAt'
+    });
+    this.version(11).stores({
+      reports: '++id, date, synced, syncedGas, syncedSupabase, createdAt',
+      steelChanges: '++id, date, synced, syncedGas, syncedSupabase, createdAt',
+      steelMeasurements: '++id, date, synced, syncedGas, syncedSupabase, createdAt',
+      events: '++id, date, closed, synced, syncedGas, syncedSupabase, createdAt',
+      inventoryRecords: '++id, date, synced, syncedGas, syncedSupabase, createdAt',
+      pendingDeletions: '++id, type, recordId, synced, createdAt',
+      steelDiscards: '++id, date, tipoAcero, synced, syncedGas, syncedSupabase, createdAt',
+      checklists: '++id, date, type, synced, syncedGas, syncedSupabase, createdAt',
       drillStatuses: '++id, drillNumber, status, phase, synced, updatedAt'
     });
   }

@@ -136,7 +136,7 @@ class SyncEngine {
       const userId = session?.user?.id ?? null;
 
       // 1. Sincronizar REPORTES DE TURNO
-      const pendingReports = await db.reports.where('synced').equals(0).toArray();
+      const pendingReports = await db.reports.filter(r => (r as any).syncedSupabase !== 1).toArray();
       for (const r of pendingReports) {
         const payload = {
           id: String(r.id || `rep_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`),
@@ -157,12 +157,13 @@ class SyncEngine {
         };
         const { error } = await supabase.from('shift_reports').upsert(payload);
         if (!error && r.id) {
-          await db.reports.update(r.id, { synced: 1 });
+          const isGasDone = (r as any).syncedGas === 1;
+          await db.reports.update(r.id, { syncedSupabase: 1, synced: isGasDone ? 1 : 0 });
         }
       }
 
       // 2. Sincronizar CAMBIO DE ACEROS
-      const pendingSteelChanges = await db.steelChanges.where('synced').equals(0).toArray();
+      const pendingSteelChanges = await db.steelChanges.filter(sc => (sc as any).syncedSupabase !== 1).toArray();
       for (const sc of pendingSteelChanges) {
         const payload = {
           id: String(sc.id || `sc_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`),
@@ -177,12 +178,13 @@ class SyncEngine {
         };
         const { error } = await supabase.from('steel_changes').upsert(payload);
         if (!error && sc.id) {
-          await db.steelChanges.update(sc.id, { synced: 1 });
+          const isGasDone = (sc as any).syncedGas === 1;
+          await db.steelChanges.update(sc.id, { syncedSupabase: 1, synced: isGasDone ? 1 : 0 });
         }
       }
 
       // 3. Sincronizar MEDICIONES DE ACEROS
-      const pendingSteelMeasurements = await db.steelMeasurements.where('synced').equals(0).toArray();
+      const pendingSteelMeasurements = await db.steelMeasurements.filter(sm => (sm as any).syncedSupabase !== 1).toArray();
       for (const sm of pendingSteelMeasurements) {
         const payload = {
           id: String(sm.id || `sm_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`),
@@ -214,12 +216,13 @@ class SyncEngine {
         };
         const { error } = await supabase.from('steel_measurements').upsert(payload);
         if (!error && sm.id) {
-          await db.steelMeasurements.update(sm.id, { synced: 1 });
+          const isGasDone = (sm as any).syncedGas === 1;
+          await db.steelMeasurements.update(sm.id, { syncedSupabase: 1, synced: isGasDone ? 1 : 0 });
         }
       }
 
       // 4. Sincronizar EVENTOS / HALLAZGOS
-      const pendingEvents = await db.events.where('synced').equals(0).toArray();
+      const pendingEvents = await db.events.filter(ev => (ev as any).syncedSupabase !== 1).toArray();
       for (const ev of pendingEvents) {
         let photoUrl = ev.photo || null;
         if (photoUrl && photoUrl.startsWith('data:image')) {
@@ -244,7 +247,8 @@ class SyncEngine {
 
         const { error } = await supabase.from('events').upsert(payload);
         if (!error && ev.id) {
-          await db.events.update(ev.id, { synced: 1 });
+          const isGasDone = (ev as any).syncedGas === 1;
+          await db.events.update(ev.id, { syncedSupabase: 1, synced: isGasDone ? 1 : 0 });
         }
       }
 
@@ -260,7 +264,7 @@ class SyncEngine {
       }
 
       // 6. Sincronizar INVENTARIO
-      const pendingInventory = await db.inventoryRecords.where('synced').equals(0).toArray();
+      const pendingInventory = await db.inventoryRecords.filter(inv => (inv as any).syncedSupabase !== 1).toArray();
       for (const inv of pendingInventory) {
         const { id, date, observations, synced, createdAt, ...stockData } = inv;
         const payload = {
@@ -273,12 +277,13 @@ class SyncEngine {
         };
         const { error } = await supabase.from('inventory_records').upsert(payload);
         if (!error && id) {
-          await db.inventoryRecords.update(id, { synced: 1 });
+          const isGasDone = (inv as any).syncedGas === 1;
+          await db.inventoryRecords.update(id, { syncedSupabase: 1, synced: isGasDone ? 1 : 0 });
         }
       }
 
       // 7. Sincronizar DESCARTE DE ACEROS
-      const pendingDiscards = await db.steelDiscards.where('synced').equals(0).toArray();
+      const pendingDiscards = await db.steelDiscards.filter(d => (d as any).syncedSupabase !== 1).toArray();
       for (const d of pendingDiscards) {
         // Subir fotos pendientes si vienen en base64
         const photosPayload: Record<string, string> = {};
@@ -310,12 +315,13 @@ class SyncEngine {
 
         const { error } = await supabase.from('steel_discards').upsert(payload);
         if (!error && d.id) {
-          await db.steelDiscards.update(d.id, { synced: 1 });
+          const isGasDone = (d as any).syncedGas === 1;
+          await db.steelDiscards.update(d.id, { syncedSupabase: 1, synced: isGasDone ? 1 : 0 });
         }
       }
 
       // 8. Sincronizar CHECKLISTS
-      const pendingChecklists = await db.checklists.where('synced').equals(0).toArray();
+      const pendingChecklists = await db.checklists.filter(chk => (chk as any).syncedSupabase !== 1).toArray();
       for (const chk of pendingChecklists) {
         const payload = {
           id: String(chk.id || `chk_${Date.now()}`),
@@ -333,7 +339,8 @@ class SyncEngine {
 
         const { error } = await supabase.from('checklists').upsert(payload);
         if (!error && chk.id) {
-          await db.checklists.update(chk.id, { synced: 1 });
+          const isGasDone = (chk as any).syncedGas === 1;
+          await db.checklists.update(chk.id, { syncedSupabase: 1, synced: isGasDone ? 1 : 0 });
         }
       }
 

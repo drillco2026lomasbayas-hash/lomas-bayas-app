@@ -12,12 +12,11 @@ import {
   Trash2,
   Home,
   Camera,
-  Image as ImageIcon
+  Image as ImageIcon,
+  History
 } from 'lucide-react';
-import { db, type WellRecord, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard, type DrillStatusRecord } from './db';
+import { db, type WellRecord, type ShiftReport, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard, type DrillStatusRecord } from './db';
 import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import './index.css';
 import DrillReportModal from './DrillReportModal';
 import { ChecklistPage } from './ChecklistPage';
@@ -26,6 +25,9 @@ import { syncEngine } from './syncEngine';
 import { useAuth } from './AuthContext';
 import { LoginView } from './LoginView';
 import { AdminPanel } from './AdminPanel';
+import { RecentRecordsModal } from './RecentRecordsModal';
+import { getDrillWorstWear } from './utils/steelUtils';
+import { formatDateSafe } from './utils/dateUtils';
 
 // Utilidad para comprimir imágenes y reducir su peso a ~1MB o menos
 const compressImage = (file: File): Promise<string> => {
@@ -390,14 +392,21 @@ const App: React.FC = () => {
   const [loadingDiameters, setLoadingDiameters] = useState(false);
 
   // Estado para Reporte General
+  const [saveOperatorName, setSaveOperatorName] = useState(() => {
+    return localStorage.getItem('save_operator_name') === 'true';
+  });
+  const [isTotalReport, setIsTotalReport] = useState(false);
+  const [showRecentHistoryModal, setShowRecentHistoryModal] = useState(false);
+
   const [reportData, setReportData] = useState(() => {
     const saved = localStorage.getItem('draft_reportData');
     if (saved) return JSON.parse(saved);
+    const savedOp = localStorage.getItem('saved_operator_name') || '';
     return {
       date: new Date().toISOString().split('T')[0],
       shift: 'TURNO A',
       drillNumber: '',
-      operator: '',
+      operator: savedOp,
       bench: '',
       phase: '',
       mesh: '',
@@ -499,12 +508,20 @@ const App: React.FC = () => {
   });
   const [uploadingDiscardPhoto, setUploadingDiscardPhoto] = useState(false);
 
-  useEffect(() => { localStorage.setItem('draft_reportData', JSON.stringify(reportData)); }, [reportData]);
-  useEffect(() => { localStorage.setItem('draft_wells', JSON.stringify(wells)); }, [wells]);
-  useEffect(() => { localStorage.setItem('draft_steelChangeData', JSON.stringify(steelChangeData)); }, [steelChangeData]);
-  useEffect(() => { localStorage.setItem('draft_steelMeasurementData', JSON.stringify(steelMeasurementData)); }, [steelMeasurementData]);
-  useEffect(() => { localStorage.setItem('draft_newEventData', JSON.stringify(newEventData)); }, [newEventData]);
-  useEffect(() => { localStorage.setItem('draft_discardData', JSON.stringify(discardData)); }, [discardData]);
+  const safeSaveDraft = (key: string, data: any) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+      console.warn(`No se pudo guardar borrador ${key} en localStorage:`, e);
+    }
+  };
+
+  useEffect(() => { safeSaveDraft('draft_reportData', reportData); }, [reportData]);
+  useEffect(() => { safeSaveDraft('draft_wells', wells); }, [wells]);
+  useEffect(() => { safeSaveDraft('draft_steelChangeData', steelChangeData); }, [steelChangeData]);
+  useEffect(() => { safeSaveDraft('draft_steelMeasurementData', steelMeasurementData); }, [steelMeasurementData]);
+  useEffect(() => { safeSaveDraft('draft_newEventData', newEventData); }, [newEventData]);
+  useEffect(() => { safeSaveDraft('draft_discardData', discardData); }, [discardData]);
 
   const getCurrentTime = () => {
     const now = new Date();
@@ -528,7 +545,8 @@ const App: React.FC = () => {
       await db.events.where('synced').equals(0).count() +
       await db.inventoryRecords.where('synced').equals(0).count() +
       await db.steelDiscards.where('synced').equals(0).count() +
-      await db.checklists.where('synced').equals(0).count();
+      await db.checklists.where('synced').equals(0).count() +
+      await db.drillStatuses.where('synced').equals(0).count();
   };
 
   // Manejo del botón atrás del navegador y móvil (Android/PWA)
@@ -707,13 +725,15 @@ const App: React.FC = () => {
 
   const handleSave = async () => {
     try {
-      const recordToSave = {
+      const recordToSave: Omit<ShiftReport, 'id'> = {
         ...reportData,
         wells: wells.map(w => ({
           ...w,
           meters: w.type === 'well' ? parseDecimal(w.meters) : 0,
         })),
         synced: 0,
+        syncedGas: 0,
+        syncedSupabase: 0,
         createdAt: Date.now()
       };
 
@@ -723,7 +743,7 @@ const App: React.FC = () => {
         return;
       }
 
-      let syncSuccess = false;
+      let gasSuccess = false;
       const btn = document.querySelector('.btn-save');
       const originalText = btn?.textContent || 'GUARDAR';
 
@@ -734,14 +754,30 @@ const App: React.FC = () => {
           fd.append('payload', reportStr);
           const res = await fetch(GAS_URL, { method: 'POST', body: fd });
           const json = await res.json();
-          if (json.success) syncSuccess = true;
-        } catch (e) { console.error('Error enviando a la nube:', e); }
+          if (json.success) gasSuccess = true;
+        } catch (e) { console.error('Error enviando a la nube (GAS):', e); }
       }
 
-      recordToSave.synced = syncSuccess ? 1 : 0;
-      await db.reports.add(recordToSave);
+      recordToSave.syncedGas = gasSuccess ? 1 : 0;
+      recordToSave.syncedSupabase = 0;
+      recordToSave.synced = 0;
+      await db.reports.add(recordToSave as ShiftReport);
+
+      if (isOnline) {
+        try {
+          await syncEngine.syncAll();
+        } catch (e) {
+          console.warn('Error sincronizando con Supabase:', e);
+        }
+      }
+
       setPendingCount(await getTotalPendingCount());
 
+      if (saveOperatorName && reportData.operator) {
+        localStorage.setItem('saved_operator_name', reportData.operator);
+      }
+
+      const syncSuccess = gasSuccess || isOnline;
       if (syncSuccess) {
         setWells([]);
         localStorage.removeItem('draft_wells');
@@ -751,7 +787,7 @@ const App: React.FC = () => {
           date: new Date().toISOString().split('T')[0],
           shift: 'TURNO A',
           drillNumber: '',
-          operator: '',
+          operator: saveOperatorName ? reportData.operator : '',
           bench: '',
           phase: '',
           mesh: '',
@@ -777,20 +813,28 @@ const App: React.FC = () => {
     }
   };
 
-
-
   const syncData = async () => {
-    console.log('Iniciando sincronización...');
+    console.log('Iniciando sincronización completa...');
+    
+    // 1. Sincronizar con Supabase
+    if (navigator.onLine) {
+      try {
+        await syncEngine.syncAll();
+      } catch (err) {
+        console.warn('Error sincronizando con Supabase:', err);
+      }
+    }
+
     if (!GAS_URL || GAS_URL.includes('TU_URL_DE_APPS_SCRIPT_AQUI')) {
       console.warn('Sincronización cancelada: GAS_URL no configurada.');
       return;
     }
 
-    // Helper para sincronizar registros de cualquier tabla
+    // 2. Helper para sincronizar registros pendientes hacia Google Sheets
     const syncTable = async (table: typeof db.reports | typeof db.steelChanges | typeof db.steelMeasurements | typeof db.events | typeof db.inventoryRecords | typeof db.steelDiscards | typeof db.checklists, fieldName: string) => {
-      const unsynced = await (table as any).where('synced').equals(0).toArray();
+      const unsynced = await (table as any).filter((r: any) => r.syncedGas !== 1).toArray();
       if (unsynced.length === 0) return;
-      console.log(`${fieldName}: ${unsynced.length} pendiente(s)`);
+      console.log(`${fieldName}: ${unsynced.length} pendiente(s) hacia GAS`);
 
       for (const record of unsynced) {
         try {
@@ -799,11 +843,15 @@ const App: React.FC = () => {
           const res = await fetch(GAS_URL, { method: 'POST', body: fd });
           const json = await res.json();
           if (json.success) {
-            await (table as any).update(record.id!, { synced: 1 });
-            console.log(`${fieldName} sincronizado:`, record.id);
+            const isSupabaseDone = record.syncedSupabase === 1;
+            await (table as any).update(record.id!, {
+              syncedGas: 1,
+              synced: isSupabaseDone ? 1 : 0
+            });
+            console.log(`${fieldName} sincronizado a GAS:`, record.id);
           }
         } catch (error) {
-          console.error(`Error sincronizando ${fieldName}:`, record.id, error);
+          console.error(`Error sincronizando ${fieldName} a GAS:`, record.id, error);
         }
       }
     };
@@ -848,8 +896,19 @@ const App: React.FC = () => {
         } catch (e) { console.error('Error enviando a nube:', e); }
       }
 
-      record.synced = syncSuccess ? 1 : 0;
-      await db.steelChanges.add(record);
+      record.syncedGas = syncSuccess ? 1 : 0;
+      record.syncedSupabase = 0;
+      record.synced = 0;
+      await db.steelChanges.add(record as SteelChange);
+
+      if (isOnline) {
+        try {
+          await syncEngine.syncAll();
+        } catch (e) {
+          console.warn('Error sincronizando con Supabase:', e);
+        }
+      }
+
       setPendingCount(await getTotalPendingCount());
 
       if (syncSuccess) {
@@ -878,12 +937,47 @@ const App: React.FC = () => {
     }
   };
 
-
-
   // Guardar Medición de Aceros (convirtiendo automáticamente a mm si se ingresó en pulgadas)
   const handleSaveSteelMeasurement = async () => {
     try {
       const drill = steelMeasurementData.drillNumber;
+
+      // Validación de rango antes de guardar (Feature 3.5)
+      const valuesToCheck = [
+        { name: 'Adaptador/Martillo', val: steelMeasurementData.adaptadorInferiorMedio, isMart: true },
+        { name: 'Barra Patera Superior', val: steelMeasurementData.barraPateraSuperior, isMart: false },
+        { name: 'Barra Patera Medio', val: steelMeasurementData.barraPateraMedio, isMart: false },
+        { name: 'Barra Patera Inferior', val: steelMeasurementData.barraPateraInferior, isMart: false },
+        { name: 'Barra 1 Superior', val: steelMeasurementData.barraSeguidora1Superior, isMart: false },
+        { name: 'Barra 1 Medio', val: steelMeasurementData.barraSeguidora1Medio, isMart: false },
+        { name: 'Barra 1 Inferior', val: steelMeasurementData.barraSeguidora1Inferior, isMart: false },
+        { name: 'Barra 2 Superior', val: steelMeasurementData.barraSeguidora2Superior, isMart: false },
+        { name: 'Barra 2 Medio', val: steelMeasurementData.barraSeguidora2Medio, isMart: false },
+        { name: 'Barra 2 Inferior', val: steelMeasurementData.barraSeguidora2Inferior, isMart: false },
+        { name: 'Barra 3 Superior', val: steelMeasurementData.barraSeguidora3Superior, isMart: false },
+        { name: 'Barra 3 Medio', val: steelMeasurementData.barraSeguidora3Medio, isMart: false },
+        { name: 'Barra 3 Inferior', val: steelMeasurementData.barraSeguidora3Inferior, isMart: false },
+        { name: 'Barra 4 Superior', val: steelMeasurementData.barraSeguidora4Superior, isMart: false },
+        { name: 'Barra 4 Medio', val: steelMeasurementData.barraSeguidora4Medio, isMart: false },
+        { name: 'Barra 4 Inferior', val: steelMeasurementData.barraSeguidora4Inferior, isMart: false },
+        { name: 'Barra 5 Superior', val: steelMeasurementData.barraSeguidora5Superior, isMart: false },
+        { name: 'Barra 5 Medio', val: steelMeasurementData.barraSeguidora5Medio, isMart: false },
+        { name: 'Barra 5 Inferior', val: steelMeasurementData.barraSeguidora5Inferior, isMart: false },
+      ];
+
+      const outOfRange = valuesToCheck.filter(v => {
+        if (!v.val || v.val === 0) return false;
+        const det = detectMeasurementUnit(v.val, drill, v.isMart);
+        return !det.inRange;
+      });
+
+      if (outOfRange.length > 0) {
+        const confirmMsg = `⚠️ Advertencia: Se detectaron ${outOfRange.length} medida(s) fuera del rango habitual de la perforadora ${drill} (${outOfRange.map(o => o.name).slice(0, 3).join(', ')}${outOfRange.length > 3 ? '...' : ''}).\n\n¿Estás seguro de que deseas guardar estos datos?`;
+        if (!window.confirm(confirmMsg)) {
+          return;
+        }
+      }
+
       const record: Omit<SteelMeasurement, 'id'> = {
         date: steelMeasurementData.date,
         shift: steelMeasurementData.shift,
@@ -909,6 +1003,8 @@ const App: React.FC = () => {
         barraSeguidora5Inferior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora5Inferior, drill, false),
         comentarios: steelMeasurementData.comentarios || '',
         synced: 0,
+        syncedGas: 0,
+        syncedSupabase: 0,
         createdAt: Date.now()
       };
 
@@ -918,7 +1014,7 @@ const App: React.FC = () => {
         return;
       }
 
-      let syncSuccess = false;
+      let gasSuccess = false;
       const btn = document.querySelector('.btn-save-measurement');
       const originalText = btn?.textContent || 'GUARDAR';
 
@@ -929,11 +1025,26 @@ const App: React.FC = () => {
           fd.append('steelMeasurement', recordStr);
           const res = await fetch(GAS_URL, { method: 'POST', body: fd });
           const json = await res.json();
-          if (json.success) syncSuccess = true;
+          if (json.success) gasSuccess = true;
         } catch (e) { console.error('Error enviando a nube:', e); }
       }
 
-      record.synced = syncSuccess ? 1 : 0;
+      record.syncedGas = gasSuccess ? 1 : 0;
+      record.syncedSupabase = 0;
+      record.synced = 0;
+      await db.steelMeasurements.add(record as SteelMeasurement);
+
+      if (isOnline) {
+        try {
+          await syncEngine.syncAll();
+        } catch (e) {
+          console.warn('Error sincronizando con Supabase:', e);
+        }
+      }
+
+      setPendingCount(await getTotalPendingCount());
+
+      const syncSuccess = gasSuccess || isOnline;
       await db.steelMeasurements.add(record);
       setPendingCount(await getTotalPendingCount());
 
@@ -1120,8 +1231,19 @@ const App: React.FC = () => {
         }
       }
 
-      eventToSync.synced = syncSuccess ? 1 : 0;
-      await db.events.add(eventToSync);
+      eventToSync.syncedGas = syncSuccess ? 1 : 0;
+      eventToSync.syncedSupabase = 0;
+      eventToSync.synced = 0;
+      await db.events.add(eventToSync as Event);
+
+      if (isOnline) {
+        try {
+          await syncEngine.syncAll();
+        } catch (e) {
+          console.warn('Error sincronizando evento con Supabase:', e);
+        }
+      }
+
       setPendingCount(await getTotalPendingCount());
 
       if (syncSuccess) {
@@ -1494,6 +1616,10 @@ const App: React.FC = () => {
     const logoDrillcoData = await loadImageForPDF('/drillco.png');
     const logoLomasBayasData = await loadImageForPDF('/lomasbayas.png');
 
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable')
+    ]);
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -1660,8 +1786,19 @@ const App: React.FC = () => {
         }
       }
 
-      dataToSync.synced = syncSuccess ? 1 : 0;
-      await db.steelDiscards.add(dataToSync);
+      dataToSync.syncedGas = syncSuccess ? 1 : 0;
+      dataToSync.syncedSupabase = 0;
+      dataToSync.synced = 0;
+      await db.steelDiscards.add(dataToSync as SteelDiscard);
+
+      if (isOnline) {
+        try {
+          await syncEngine.syncAll();
+        } catch (e) {
+          console.warn('Error sincronizando descarte con Supabase:', e);
+        }
+      }
+
       setPendingCount(await getTotalPendingCount());
 
       if (syncSuccess) {
@@ -1745,7 +1882,7 @@ const App: React.FC = () => {
     wells.length > 0;
 
   const hasDraftSteel = steelChangeData.drillNumber || steelChangeData.serialNumber || steelChangeData.comments;
-  const hasDraftMeasurement = steelMeasurementData.drillNumber || steelMeasurementData.adaptadorInferiorMedio > 0 || steelMeasurementData.barraPateraSuperior > 0;
+  const hasDraftMeasurement = steelMeasurementData.drillNumber || parseMeasurementInput(steelMeasurementData.adaptadorInferiorMedio) > 0 || parseMeasurementInput(steelMeasurementData.barraPateraSuperior) > 0;
   const hasDraftEvent = newEventData.title || newEventData.description || newEventData.responsible;
   const hasDraftDiscard = discardData.serie || discardData.equipo || discardData.causaDescarte;
 
@@ -1778,6 +1915,68 @@ const App: React.FC = () => {
   return (
     <div>
       <SyncStatusBar />
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '0.35rem 1rem',
+        background: '#0f172a',
+        color: '#94a3b8',
+        fontSize: '0.78rem',
+        borderBottom: '1px solid #1e293b'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ color: '#cbd5e1', fontWeight: 600 }}>
+            {profile?.full_name || profile?.email || 'Usuario'}
+          </span>
+          {profile?.role && (
+            <span style={{
+              background: '#1e293b',
+              color: '#f2c12e',
+              padding: '1px 6px',
+              borderRadius: '4px',
+              fontSize: '0.68rem',
+              fontWeight: 700,
+              textTransform: 'uppercase'
+            }}>
+              {profile.role}
+            </span>
+          )}
+        </div>
+
+        <button
+          onClick={() => setShowRecentHistoryModal(true)}
+          style={{
+            background: 'rgba(255, 255, 255, 0.08)',
+            color: '#f8fafc',
+            border: '1px solid rgba(255, 255, 255, 0.15)',
+            borderRadius: '6px',
+            padding: '3px 8px',
+            fontSize: '0.72rem',
+            fontWeight: 700,
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '5px'
+          }}
+          title="Ver historial de registros guardados en este dispositivo"
+        >
+          <History size={13} />
+          <span>Mis Registros</span>
+          {pendingCount > 0 && (
+            <span style={{
+              background: '#f59e0b',
+              color: '#000',
+              borderRadius: '9999px',
+              padding: '0 5px',
+              fontSize: '0.65rem',
+              fontWeight: 800
+            }}>
+              {pendingCount}
+            </span>
+          )}
+        </button>
+      </div>
       <div className="connectivity-status" style={{ display: 'none' }}>
         {isOnline ? (
           <><Wifi size={14} style={{ verticalAlign: 'middle', marginRight: '5px' }} /> ONLINE{pendingCount > 0 ? ` - ${pendingCount} PENDIENTE(S)` : ' - SINCRONIZADO'}</>
@@ -1838,57 +2037,13 @@ const App: React.FC = () => {
               const currentStatus = st?.status || 'Operativa';
               const currentPhase = st?.phase || 'Sin fase';
 
-              // Desgaste de aceros según diametersData
-              const value = diametersData[drill];
-              const isDTHDrill = ['8', '11', '14'].includes(drill);
-
-              const getCompInfo = (val: number | undefined, isMart: boolean) => {
-                if (!val) return null;
-                let v = val < 50 ? val * 25.4 : val;
-                let mn = 0, mx = 0;
-                if (isDTHDrill) {
-                  if (isMart) { mn = 132; mx = 165; }
-                  else { mn = 108; mx = 114.3; }
-                } else if (['5', '6', '7', '12', '13'].includes(drill)) { mn = 194; mx = 219; }
-                else if (['9', '10'].includes(drill)) { mn = 248; mx = 273; }
-
-                let p = ((v - mn) / (mx - mn)) * 100;
-                p = Math.max(0, Math.min(100, p));
-                return { p, v };
-              };
-
-              const percs = [
-                getCompInfo(value?.barras?.[0]?.box, false),
-                getCompInfo(value?.barras?.[1]?.box, false),
-                getCompInfo(value?.adaptador?.centro, isDTHDrill),
-              ].filter(x => x !== null) as { p: number; v: number }[];
-
-              let percentage: number | null = null;
-              if (percs.length > 0) {
-                const worst = percs.reduce((prev, curr) => (curr.p < prev.p) ? curr : prev);
-                percentage = worst.p;
-              }
-
-              // Color del estado de aceros
-              let steelColor = '#6b7280'; // Gris
-              let steelText = 'Sin datos';
-              let steelBg = '#f3f4f6';
-
-              if (percentage !== null) {
-                if (percentage > 66) {
-                  steelColor = '#15803d'; // Verde
-                  steelBg = '#dcfce7';
-                  steelText = `OK (${percentage.toFixed(0)}%)`;
-                } else if (percentage >= 33) {
-                  steelColor = '#b45309'; // Amarillo
-                  steelBg = '#fef3c7';
-                  steelText = `Precaución (${percentage.toFixed(0)}%)`;
-                } else {
-                  steelColor = '#b91c1c'; // Rojo
-                  steelBg = '#fee2e2';
-                  steelText = `Crítico (${percentage.toFixed(0)}%)`;
-                }
-              }
+              // Desgaste exhaustivo de aceros evaluando todas las barras (1 a 6) y adaptador/martillo
+              const wearResult = getDrillWorstWear(drill, diametersData[drill]);
+              let steelColor = wearResult.badgeColor;
+              let steelText = wearResult.percentage !== null
+                ? `${wearResult.statusText} (${wearResult.percentage}%)`
+                : 'Sin datos';
+              let steelBg = wearResult.badgeBg;
 
               // Color del Estado del equipo
               let statusBadgeBg = '#dcfce7';
@@ -1983,7 +2138,7 @@ const App: React.FC = () => {
                           {steelText}
                         </span>
                       </div>
-                      {percentage !== null && (
+                      {wearResult.percentage !== null && (
                         <div style={{
                           width: '100%',
                           height: '5px',
@@ -1992,7 +2147,7 @@ const App: React.FC = () => {
                           overflow: 'hidden',
                         }}>
                           <div style={{
-                            width: `${percentage}%`,
+                            width: `${wearResult.percentage}%`,
                             height: '100%',
                             backgroundColor: steelColor,
                             borderRadius: '3px',
@@ -2031,9 +2186,22 @@ const App: React.FC = () => {
               </div>
               <div className="form-group">
                 <label>Perforadora</label>
-                <select value={reportData.drillNumber} onChange={(e) => setReportData({ ...reportData, drillNumber: e.target.value })}>
+                <select
+                  value={reportData.drillNumber}
+                  onChange={(e) => {
+                    const drillVal = e.target.value;
+                    const stPhase = drillStatuses[drillVal]?.phase || '';
+                    setReportData((prev: typeof reportData) => ({
+                      ...prev,
+                      drillNumber: drillVal,
+                      phase: stPhase || prev.phase
+                    }));
+                  }}
+                >
                   <option value="">Seleccionar...</option>
                   <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
                   <option value="8">8</option>
                   <option value="9">9</option>
                   <option value="10">10</option>
@@ -2045,10 +2213,34 @@ const App: React.FC = () => {
               </div>
               <div className="form-group">
                 <label>Operador *</label>
-                <input type="text" placeholder="Nombre" value={reportData.operator} onChange={(e) => setReportData({ ...reportData, operator: e.target.value })} />
+                <input
+                  type="text"
+                  placeholder="Nombre"
+                  value={reportData.operator}
+                  onChange={(e) => {
+                    const newOp = e.target.value;
+                    setReportData((prev: typeof reportData) => ({ ...prev, operator: newOp }));
+                    if (saveOperatorName) {
+                      localStorage.setItem('saved_operator_name', newOp);
+                    }
+                  }}
+                />
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '4px' }}>
-                  <input type="checkbox" id="saveName" style={{ width: 'auto' }} />
-                  <label htmlFor="saveName" style={{ textTransform: 'none', fontSize: '0.7rem' }}>Guardar nombre</label>
+                  <input
+                    type="checkbox"
+                    id="saveName"
+                    checked={saveOperatorName}
+                    onChange={(e) => {
+                      const checked = e.target.checked;
+                      setSaveOperatorName(checked);
+                      localStorage.setItem('save_operator_name', String(checked));
+                      if (checked && reportData.operator) {
+                        localStorage.setItem('saved_operator_name', reportData.operator);
+                      }
+                    }}
+                    style={{ width: 'auto' }}
+                  />
+                  <label htmlFor="saveName" style={{ textTransform: 'none', fontSize: '0.7rem', cursor: 'pointer' }}>Guardar nombre</label>
                 </div>
               </div>
               <div className="form-group">
@@ -2100,8 +2292,14 @@ const App: React.FC = () => {
             <h2 style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               REGISTRO DE TRABAJO
               <div style={{ display: 'flex', alignItems: 'center', gap: '5px', textTransform: 'none', fontSize: '0.8rem', fontWeight: 500 }}>
-                <input type="checkbox" id="reporteTotal" style={{ width: 'auto' }} />
-                <label htmlFor="reporteTotal">REPORTE TOTAL</label>
+                <input
+                  type="checkbox"
+                  id="reporteTotal"
+                  checked={isTotalReport}
+                  onChange={(e) => setIsTotalReport(e.target.checked)}
+                  style={{ width: 'auto' }}
+                />
+                <label htmlFor="reporteTotal" style={{ cursor: 'pointer' }}>REPORTE TOTAL</label>
               </div>
             </h2>
             <div style={{ display: 'flex', gap: '15px' }}>
@@ -2238,7 +2436,7 @@ const App: React.FC = () => {
                 <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--text-muted)' }}>
                   ACUMULADO {item.type === 'well' ? 'METROS' : 'TIEMPO'}: <span style={{ color: item.type === 'well' ? 'var(--secondary)' : 'var(--danger)' }}>
                     {item.type === 'well'
-                      ? wells.slice(0, index + 1).filter(w => w.type === 'well').reduce((s, w) => s + (w.meters || 0), 0).toFixed(1) + ' M'
+                      ? wells.slice(0, index + 1).filter(w => w.type === 'well').reduce((s, w) => s + parseDecimal(w.meters), 0).toFixed(1) + ' M'
                       : wells.slice(0, index + 1).filter(w => w.type === 'delay').reduce((s, w) => s + (w.timeMin || 0), 0) + ' MIN'
                     }
                   </span>
@@ -2318,6 +2516,8 @@ const App: React.FC = () => {
                 >
                   <option value="">Seleccionar...</option>
                   <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
                   <option value="8">8</option>
                   <option value="9">9</option>
                   <option value="10">10</option>
@@ -2490,6 +2690,8 @@ const App: React.FC = () => {
                 >
                   <option value="">Seleccionar...</option>
                   <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
                   <option value="8">8</option>
                   <option value="9">9</option>
                   <option value="10">10</option>
@@ -2827,7 +3029,7 @@ const App: React.FC = () => {
                   <h3 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text)' }}>{event.title}</h3>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <span style={{ fontSize: '0.8rem', color: 'var(--text-light)' }}>
-                      {new Date(event.date).toLocaleDateString('es-CL')}
+                      {formatDateSafe(event.date)}
                     </span>
                     <button
                       onClick={() => confirmDeleteEvent(event)}
@@ -3550,13 +3752,17 @@ const App: React.FC = () => {
                 />
               </div>
               <div className="form-group">
-                <label>Equipo</label>
-                <input
-                  type="text"
-                  placeholder="Ej: PV-05"
+                <label>Equipo / Perforadora</label>
+                <select
                   value={discardData.equipo}
                   onChange={(e) => setDiscardData({ ...discardData, equipo: e.target.value })}
-                />
+                >
+                  <option value="">Seleccionar equipo...</option>
+                  {['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'].map(d => (
+                    <option key={d} value={`PE-${d}`}>PE-{d} ({DRILL_CONFIG[d]?.model || 'N/A'})</option>
+                  ))}
+                  <option value="OTRO">Otro equipo</option>
+                </select>
               </div>
               <div className="form-group">
                 <label>Diámetro</label>
@@ -3859,48 +4065,13 @@ const App: React.FC = () => {
               gap: '1rem' 
             }}>
               {['5', '6', '7', '8', '9', '10', '11', '12', '13', '14'].map(drill => {
-                const value = diametersData[drill];
-                const isDTHDrill = ['8', '11', '14'].includes(drill);
-                
-                const getCompInfo = (val: number | undefined, isMart: boolean) => {
-                  if (!val) return null;
-                  let v = val < 50 ? val * 25.4 : val;
-                  let mn = 0, mx = 0;
-                  if (isDTHDrill) {
-                    if (isMart) { mn = 132; mx = 165; }
-                    else { mn = 108; mx = 114.3; }
-                  } else if (['5', '6', '7', '12', '13'].includes(drill)) { mn = 194; mx = 219; }
-                  else if (['9', '10'].includes(drill)) { mn = 248; mx = 273; }
-                  
-                  let p = ((v - mn) / (mx - mn)) * 100;
-                  p = Math.max(0, Math.min(100, p));
-                  return { p, v };
-                };
+                const wear = getDrillWorstWear(drill, diametersData[drill]);
+                const percentage = wear.percentage;
+                const valMm = wear.worstMm;
 
-                const percs = [
-                  getCompInfo(value?.barras?.[0]?.box, false),
-                  getCompInfo(value?.barras?.[1]?.box, false),
-                  getCompInfo(value?.adaptador?.centro, isDTHDrill)
-                ].filter(x => x !== null) as { p: number, v: number }[];
-                
-                let percentage = null;
-                let valMm = 0;
-                
-                if (percs.length > 0) {
-                  const worst = percs.reduce((prev, curr) => (curr.p < prev.p) ? curr : prev);
-                  percentage = worst.p;
-                  valMm = worst.v;
-                }
-
-                let color = '#f0f2f5'; // default gris
-                let colorText = '#6c757d';
-                let stateText = 'SIN DATOS';
-
-                if (percentage !== null) {
-                  if (percentage > 66) { color = '#d4edda'; colorText = '#155724'; stateText = 'OK'; }
-                  else if (percentage >= 33) { color = '#fff3cd'; colorText = '#856404'; stateText = 'PRECAUCIÓN'; }
-                  else { color = '#f8d7da'; colorText = '#721c24'; stateText = 'CRÍTICO'; }
-                }
+                let color = wear.badgeBg;
+                let colorText = wear.badgeColor;
+                let stateText = wear.statusText;
 
                 return (
                   <div key={drill} style={{
@@ -4226,6 +4397,17 @@ const App: React.FC = () => {
         }}>
           Presiona atrás nuevamente para salir
         </div>
+      )}
+
+      {/* Modal Historial de Registros en Dispositivo */}
+      {showRecentHistoryModal && (
+        <RecentRecordsModal
+          isOnline={isOnline}
+          onClose={() => setShowRecentHistoryModal(false)}
+          onSyncTriggered={async () => {
+            setPendingCount(await getTotalPendingCount());
+          }}
+        />
       )}
     </div>
   );

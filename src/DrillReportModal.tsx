@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
-import html2canvas from 'html2canvas';
-import jsPDF from 'jspdf';
 import { X, FileText } from 'lucide-react';
+import { calculatePercentage, getPercentageColor } from './utils/steelUtils';
+import { formatDateSafe, toDateInputValueSafe } from './utils/dateUtils';
 
 interface ComponentMeasurements {
   pin?: number;
@@ -39,64 +39,23 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
   const reportRef = useRef<HTMLDivElement>(null);
   const [generatingPDF, setGeneratingPDF] = useState(false);
 
-  // Normaliza cualquier formato de fecha a YYYY-MM-DD para inputs type="date"
-  const toDateInputValue = (val: any): string => {
-    if (!val) return '';
-    try {
-      const d = new Date(val);
-      if (isNaN(d.getTime())) return String(val);
-      return d.toISOString().split('T')[0];
-    } catch {
-      return String(val);
-    }
-  };
-
   // Estado local editable para la tabla "Fechas de Cambio"
   // Se inicializa con los datos del Sheet cuando están disponibles
   const barsCount = ['8', '11', '14'].includes(drill) ? 6 : 2;
   const [editCambiosBarras, setEditCambiosBarras] = useState<ComponentChanges[]>(() =>
     Array.from({ length: barsCount }).map((_, i) => ({
       metros: data.cambios?.barras?.[i]?.metros ?? '',
-      instalacion: toDateInputValue(data.cambios?.barras?.[i]?.instalacion),
+      instalacion: toDateInputValueSafe(data.cambios?.barras?.[i]?.instalacion),
       cambio: data.cambios?.barras?.[i]?.cambio ?? '',
     }))
   );
   const [editCambiosAdaptador, setEditCambiosAdaptador] = useState<ComponentChanges>({
     metros: data.cambios?.adaptador?.metros ?? '',
-    instalacion: toDateInputValue(data.cambios?.adaptador?.instalacion),
+    instalacion: toDateInputValueSafe(data.cambios?.adaptador?.instalacion),
     cambio: data.cambios?.adaptador?.cambio ?? '',
   });
 
   const isDTH = ['8', '11', '14'].includes(drill);
-
-  const calculatePercentage = (val?: number, drillName?: string, isMartilloComp: boolean = false) => {
-    if (!val || !drillName) return null;
-    let valMm = val;
-    if (valMm < 50) valMm = valMm * 25.4;
-    
-    let min = 0, max = 0;
-    if (['8', '11', '14'].includes(drillName)) {
-      if (isMartilloComp) {
-        min = 132; max = 165;
-      } else {
-        min = 108; max = 114.3;
-      }
-    }
-    else if (['5', '6', '7', '12', '13'].includes(drillName)) { min = 194; max = 219; }
-    else if (['9', '10'].includes(drillName)) { min = 248; max = 273; }
-
-    let percentage = ((valMm - min) / (max - min)) * 100;
-    if (percentage > 100) percentage = 100;
-    if (percentage < 0) percentage = 0;
-    return Math.round(percentage);
-  };
-
-  const getPercentageColor = (percentage: number | null) => {
-    if (percentage === null) return '#e0e0e0';
-    if (percentage > 66) return '#28a745';
-    if (percentage >= 33) return '#ffc107';
-    return '#dc3545';
-  };
 
   const getProjectedChangeDate = (
     measurements?: ComponentMeasurements,
@@ -158,6 +117,12 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
 
       // Pequeño respiro para que el navegador procese el reflow completo
       await new Promise(resolve => setTimeout(resolve, 80));
+
+      // Carga diferida de librerías para optimizar el rendimiento inicial de la app
+      const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+        import('html2canvas'),
+        import('jspdf')
+      ]);
 
       const canvas = await html2canvas(target, {
         scale: 2,
@@ -304,16 +269,7 @@ const DrillReportModal: React.FC<DrillReportModalProps> = ({ drill, data, onClos
     );
   };
 
-  const formatDate = (dateStr?: string) => {
-    if (!dateStr) return '-';
-    try {
-      const d = new Date(dateStr);
-      if (isNaN(d.getTime())) return dateStr;
-      return d.toLocaleDateString('es-CL');
-    } catch {
-      return dateStr;
-    }
-  };
+  const formatDate = (dateStr?: string) => formatDateSafe(dateStr);
 
   let stateTricono = 'Sin Datos';
   const lowestAdaptadorPerc = calculatePercentage(data?.adaptador?.centro, drill, isDTH);

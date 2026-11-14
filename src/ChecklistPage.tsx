@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Save, CheckCircle2, ClipboardCheck, List, FileText, RefreshCw } from 'lucide-react';
 import { db } from './db';
-import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable';
 import { loadImageForPDF } from './App';
+import { formatDateSafe } from './utils/dateUtils';
 
 const ROTARY_DRILLS = ['5', '6', '7', '9', '10', '12', '13'];
 const DTH_DRILLS = ['8', '11', '14'];
@@ -149,6 +148,10 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
   }, [activeTab]);
 
   const generatePDF = async (record: any) => {
+    const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+      import('jspdf'),
+      import('jspdf-autotable')
+    ]);
     const doc = new jsPDF();
 
     const logoLeft = await loadImageForPDF('/drillco reporte.jpg').catch(() => null);
@@ -168,7 +171,7 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
       startY: 35,
       head: [['Fecha', 'Tipo', 'Operador', 'Perforadora', 'Horómetro', 'Aceros en Equipo']],
       body: [[
-        new Date(record.date).toLocaleDateString(),
+        formatDateSafe(record.date),
         record.type,
         record.operador,
         `PE-${record.perforadora}`,
@@ -578,7 +581,7 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
                     .filter(h => filterDrill === 'ALL' || h.perforadora == filterDrill)
                     .map((item, i) => (
                       <tr key={i}>
-                        <td>{new Date(item.date).toLocaleDateString()}</td>
+                        <td>{formatDateSafe(item.date)}</td>
                         <td>{item.type}</td>
                         <td>PE-{item.perforadora}</td>
                         <td>{item.operador}</td>
