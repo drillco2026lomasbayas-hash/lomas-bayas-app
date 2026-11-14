@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   ClipboardList,
   Activity,
@@ -87,6 +87,193 @@ const cleanDecimalInput = (raw: string): string => {
   return s;
 };
 
+// Permite dígitos, punto, coma, barra '/' y espacios para ingresar medidas en decimales o fracciones (ej: "8 5/8", "4.25")
+const cleanMeasurementInput = (raw: string): string => {
+  if (!raw) return '';
+  return raw.replace(/[^0-9.,/ -]/g, '');
+};
+
+// Parsea tanto números decimales (con coma o punto) como fracciones compuestas o simples (ej: "8 5/8" -> 8.625, "10 3/4" -> 10.75)
+export const parseMeasurementInput = (val: string | number | undefined | null): number => {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+
+  let s = String(val).trim().replace(',', '.');
+
+  // Fracciones compuestas: ej. "8 5/8", "8-5/8", "8 + 5/8"
+  const compMatch = s.match(/^(\d+)\s*[-+ ]\s*(\d+)\/(\d+)$/);
+  if (compMatch) {
+    const whole = parseFloat(compMatch[1]);
+    const num = parseFloat(compMatch[2]);
+    const den = parseFloat(compMatch[3]);
+    if (den !== 0) return whole + (num / den);
+  }
+
+  // Fracción simple: ej. "5/8", "1/2"
+  const simpleMatch = s.match(/^(\d+)\/(\d+)$/);
+  if (simpleMatch) {
+    const num = parseFloat(simpleMatch[1]);
+    const den = parseFloat(simpleMatch[2]);
+    if (den !== 0) return num / den;
+  }
+
+  const num = parseFloat(s);
+  return isNaN(num) ? 0 : num;
+};
+
+// Estructura de detección automática de unidades
+export interface MeasurementDetection {
+  originalValue: number;
+  unit: 'pulgadas' | 'mm' | 'vacio';
+  valMm: number;
+  valInches: number;
+  labelMm: string;
+  labelInches: string;
+  inRange: boolean;
+  expectedMinMm: number;
+  expectedMaxMm: number;
+  expectedMinInches: string;
+  expectedMaxInches: string;
+}
+
+// Detección automática si la medida fue ingresada en mm o pulgadas según rangos nominales de la perforadora y componente
+export const detectMeasurementUnit = (
+  rawVal: string | number | undefined | null,
+  drillNumber?: string,
+  isMartilloOrAdaptador: boolean = false
+): MeasurementDetection => {
+  const val = parseMeasurementInput(rawVal);
+  if (!val || val <= 0) {
+    return {
+      originalValue: 0,
+      unit: 'vacio',
+      valMm: 0,
+      valInches: 0,
+      labelMm: '',
+      labelInches: '',
+      inRange: true,
+      expectedMinMm: 0,
+      expectedMaxMm: 0,
+      expectedMinInches: '',
+      expectedMaxInches: ''
+    };
+  }
+
+  // Rangos nominales esperados según la perforadora y componente
+  let minMm = 108;
+  let maxMm = 114.3;
+  let minInchesStr = '4 1/4"';
+  let maxInchesStr = '4 1/2"';
+
+  const isDTH = ['8', '11', '14'].includes(drillNumber || '');
+  const isPV275 = ['5', '6', '7', '12', '13'].includes(drillNumber || '');
+  const isMD6540 = ['9', '10'].includes(drillNumber || '');
+
+  if (isDTH) {
+    if (isMartilloOrAdaptador) {
+      minMm = 132;
+      maxMm = 165;
+      minInchesStr = '5 1/5"';
+      maxInchesStr = '6 1/8"';
+    } else {
+      minMm = 108;
+      maxMm = 114.3;
+      minInchesStr = '4 1/4"';
+      maxInchesStr = '4 1/2"';
+    }
+  } else if (isPV275) {
+    minMm = 194;
+    maxMm = 219;
+    minInchesStr = '7 5/8"';
+    maxInchesStr = '8 5/8"';
+  } else if (isMD6540) {
+    minMm = 248;
+    maxMm = 273;
+    minInchesStr = '9 3/4"';
+    maxInchesStr = '10 3/4"';
+  }
+
+  // Detección automática: valores menores a 50 son en pulgadas, mayores o iguales a 50 son en milímetros
+  const isPulgadas = val < 50;
+  const valMm = isPulgadas ? Number((val * 25.4).toFixed(1)) : val;
+  const valInches = isPulgadas ? val : Number((val / 25.4).toFixed(3));
+
+  // Tolerancia operativa para advertir valores atípicos
+  const inRange = valMm >= (minMm * 0.82) && valMm <= (maxMm * 1.08);
+
+  return {
+    originalValue: val,
+    unit: isPulgadas ? 'pulgadas' : 'mm',
+    valMm,
+    valInches,
+    labelMm: `${valMm.toFixed(1)} mm`,
+    labelInches: `${valInches.toFixed(3)}"`,
+    inRange,
+    expectedMinMm: minMm,
+    expectedMaxMm: maxMm,
+    expectedMinInches: minInchesStr,
+    expectedMaxInches: maxInchesStr
+  };
+};
+
+// Convierte automáticamente cualquier medida (mm o pulgadas) a milímetros unificados
+export const normalizeMeasurementToMm = (
+  rawVal: string | number | undefined | null,
+  drillNumber?: string,
+  isMartilloOrAdaptador: boolean = false
+): number => {
+  const detected = detectMeasurementUnit(rawVal, drillNumber, isMartilloOrAdaptador);
+  return detected.valMm;
+};
+
+// Componente badge visual para indicar la unidad detectada y su conversión en tiempo real
+const MeasurementBadge: React.FC<{
+  value: string | number | undefined | null;
+  drillNumber?: string;
+  isMartilloOrAdaptador?: boolean;
+}> = ({ value, drillNumber, isMartilloOrAdaptador }) => {
+  const det = detectMeasurementUnit(value, drillNumber, isMartilloOrAdaptador);
+  if (det.unit === 'vacio') return null;
+
+  if (!det.inRange) {
+    return (
+      <div style={{
+        marginTop: '0.25rem',
+        padding: '0.2rem 0.45rem',
+        borderRadius: '4px',
+        backgroundColor: '#fef3c7',
+        border: '1px solid #fde68a',
+        color: '#92400e',
+        fontSize: '0.7rem',
+        lineHeight: 1.3
+      }}>
+        ⚠️ <strong>{det.unit === 'pulgadas' ? `${det.valInches}"` : `${det.valMm} mm`}</strong> ({det.unit === 'pulgadas' ? `${det.valMm} mm` : `${det.valInches}"`}) — Fuera de rango esperado ({det.expectedMinInches} a {det.expectedMaxInches} / {det.expectedMinMm} a {det.expectedMaxMm} mm)
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      marginTop: '0.25rem',
+      padding: '0.2rem 0.45rem',
+      borderRadius: '4px',
+      backgroundColor: det.unit === 'pulgadas' ? '#eff6ff' : '#f0fdf4',
+      border: `1px solid ${det.unit === 'pulgadas' ? '#bfdbfe' : '#bbf7d0'}`,
+      color: det.unit === 'pulgadas' ? '#1e40af' : '#166534',
+      fontSize: '0.72rem',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '0.3rem',
+      fontWeight: 600
+    }}>
+      <span>{det.unit === 'pulgadas' ? '📏 Pulgadas:' : '📐 Milímetros:'}</span>
+      <strong>{det.unit === 'pulgadas' ? `${det.valInches}"` : `${det.valMm} mm`}</strong>
+      <span style={{ color: '#64748b', fontWeight: 400 }}>➜</span>
+      <span style={{ fontWeight: 700 }}>{det.unit === 'pulgadas' ? `${det.valMm} mm` : `${det.valInches}"`}</span>
+    </div>
+  );
+};
+
 // Convierte cualquier valor a número (soportando coma o punto)
 const parseDecimal = (val: string | number | undefined | null): number => {
   if (val === undefined || val === null || val === '') return 0;
@@ -124,6 +311,8 @@ export const loadImageForPDF = async (url: string): Promise<{ data: string, widt
 
 const lastSavedDrafts: Record<string, string> = {};
 
+export type PageType = 'inicio' | 'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros' | 'checklist' | 'admin' | 'estadoPerforadoras';
+
 const App: React.FC = () => {
   // CONFIGURACIÓN: Pega aquí la URL de tu implementación de Google Apps Script
   const GAS_URL = 'https://script.google.com/macros/s/AKfycbyJ4sVXk3Y5geSSvvuRkIQe-AOlyrsFEvxQnwOr2zbAFI7US65O1LKvs1ZlGk9Fpgvy/exec';
@@ -135,7 +324,30 @@ const App: React.FC = () => {
   });
   const [pendingCount, setPendingCount] = useState(0);
   const { profile, loading: authLoading } = useAuth();
-  const [currentPage, setCurrentPage] = useState<'inicio' | 'reporte' | 'cambioAceros' | 'medicionAceros' | 'eventos' | 'nuevoEvento' | 'analista' | 'inventario' | 'tecnico' | 'descarteAceros' | 'controlDiametros' | 'checklist' | 'admin' | 'estadoPerforadoras'>('inicio');
+
+  const [currentPage, _setCurrentPage] = useState<PageType>('inicio');
+  const [showExitToast, setShowExitToast] = useState(false);
+
+  // Referencias para que el listener de popstate (botón atrás del móvil) tenga valores actuales
+  const currentPageRef = useRef<PageType>(currentPage);
+  currentPageRef.current = currentPage;
+
+  const [selectedDrillForReport, setSelectedDrillForReport] = useState<string | null>(null);
+  const selectedDrillForReportRef = useRef<string | null>(selectedDrillForReport);
+  selectedDrillForReportRef.current = selectedDrillForReport;
+
+  const lastBackPressRef = useRef<number>(0);
+
+  // Navegación con pushState para registrar cada pantalla en el historial del navegador
+  const setCurrentPage = useCallback((targetPage: PageType | ((prev: PageType) => PageType)) => {
+    _setCurrentPage(prev => {
+      const nextPage = typeof targetPage === 'function' ? targetPage(prev) : targetPage;
+      if (nextPage !== prev) {
+        window.history.pushState({ page: nextPage }, '', '');
+      }
+      return nextPage;
+    });
+  }, []);
 
   // Configuración de Perforadoras y Modelos
   const DRILL_CONFIG: Record<string, { model: string; defaultPhase?: string }> = {
@@ -155,7 +367,7 @@ const App: React.FC = () => {
   const [savingDrillStatuses, setSavingDrillStatuses] = useState(false);
   const [drillStatusesSavedSuccess, setDrillStatusesSavedSuccess] = useState(false);
 
-  // Estado para Control de Diámetros
+  // Estado para Control de Diámetros (persistido localmente para funcionamiento offline)
   type ComponentMeasurements = { pin?: number; centro?: number; box?: number };
   type ComponentChanges = { instalacion?: string; cambio?: string; metros?: string | number };
   type DrillMeasurements = {
@@ -167,8 +379,14 @@ const App: React.FC = () => {
     garantizados?: { barras?: number[]; adaptador?: number };
     promedioMetros?: number;
   };
-  const [diametersData, setDiametersData] = useState<Record<string, DrillMeasurements>>({});
-  const [selectedDrillForReport, setSelectedDrillForReport] = useState<string | null>(null);
+  const [diametersData, setDiametersData] = useState<Record<string, DrillMeasurements>>(() => {
+    try {
+      const cached = localStorage.getItem('lomasbayas_cached_diametersData');
+      return cached ? JSON.parse(cached) : {};
+    } catch {
+      return {};
+    }
+  });
   const [loadingDiameters, setLoadingDiameters] = useState(false);
 
   // Estado para Reporte General
@@ -259,6 +477,8 @@ const App: React.FC = () => {
 
   // Estado para modal de confirmación de eliminación
   const [eventToDelete, setEventToDelete] = useState<Event | null>(null);
+  const eventToDeleteRef = useRef<Event | null>(eventToDelete);
+  eventToDeleteRef.current = eventToDelete;
 
   // Estado para Descarte de Aceros
   const [discardData, setDiscardData] = useState<Omit<SteelDiscard, 'id' | 'synced' | 'createdAt'>>(() => {
@@ -311,6 +531,52 @@ const App: React.FC = () => {
       await db.checklists.where('synced').equals(0).count();
   };
 
+  // Manejo del botón atrás del navegador y móvil (Android/PWA)
+  useEffect(() => {
+    // 1. Inicializar estado base
+    window.history.replaceState({ page: 'inicio' }, '', '');
+    // 2. Insertar un estado base para interceptar el botón atrás en 'inicio' y evitar cierre accidental
+    window.history.pushState({ page: 'inicio' }, '', '');
+
+    const handlePopState = () => {
+      // 1. Si hay modal de reporte de perforadora abierto, cerrarlo
+      if (selectedDrillForReportRef.current) {
+        setSelectedDrillForReport(null);
+        window.history.pushState({ page: currentPageRef.current }, '', '');
+        return;
+      }
+
+      // 2. Si hay modal de confirmación de eliminación abierto, cerrarlo
+      if (eventToDeleteRef.current) {
+        setEventToDelete(null);
+        window.history.pushState({ page: currentPageRef.current }, '', '');
+        return;
+      }
+
+      // 3. Si estamos en cualquier página distinta a 'inicio', volver a la página principal 'inicio'
+      if (currentPageRef.current !== 'inicio') {
+        _setCurrentPage('inicio');
+        return;
+      }
+
+      // 4. Si ya estamos en 'inicio': prevenir cierre por error. Requiere pulsar atrás 2 veces en 2 segundos para salir.
+      const now = Date.now();
+      if (now - lastBackPressRef.current < 2000) {
+        window.history.back();
+      } else {
+        lastBackPressRef.current = now;
+        window.history.pushState({ page: 'inicio' }, '', '');
+        setShowExitToast(true);
+        setTimeout(() => setShowExitToast(false), 2000);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
+
   // Cargar cantidad de registros pendientes y configurar listeners de conexión
   useEffect(() => {
     const updatePendingCount = async () => {
@@ -323,13 +589,16 @@ const App: React.FC = () => {
       // Intentar sincronizar automáticamente al recuperar conexión
       syncData().then(updatePendingCount);
       syncPendingDeletions(); // Sincronizar eliminaciones pendientes
+      if (currentPageRef.current === 'inicio' || currentPageRef.current === 'controlDiametros') {
+        downloadSteelMeasurementsFromSheet();
+      }
     };
     const handleOffline = () => setIsOnline(false);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Cargar conteo inicial y sincronizar si hay conexión
+    // Cargar conteo inicial y sincronizar SOLO si hay conexión
     updatePendingCount();
     if (navigator.onLine) {
       syncData().then(updatePendingCount);
@@ -355,17 +624,21 @@ const App: React.FC = () => {
     }
   };
 
-  // Cargar datos cuando se cambia de página
+  // Cargar datos cuando se cambia de página (en modo offline solo usa datos locales)
   useEffect(() => {
     if (currentPage === 'inicio' || currentPage === 'estadoPerforadoras') {
       loadDrillStatuses();
-      downloadSteelMeasurementsFromSheet();
+      if (navigator.onLine) {
+        downloadSteelMeasurementsFromSheet();
+      }
     } else if (currentPage === 'inventario') {
       loadLastInventory();
     } else if (currentPage === 'eventos') {
       loadOpenEvents();
     } else if (currentPage === 'controlDiametros') {
-      downloadSteelMeasurementsFromSheet();
+      if (navigator.onLine) {
+        downloadSteelMeasurementsFromSheet();
+      }
     }
   }, [currentPage]);
 
@@ -607,32 +880,33 @@ const App: React.FC = () => {
 
 
 
-  // Guardar Medición de Aceros
+  // Guardar Medición de Aceros (convirtiendo automáticamente a mm si se ingresó en pulgadas)
   const handleSaveSteelMeasurement = async () => {
     try {
+      const drill = steelMeasurementData.drillNumber;
       const record: Omit<SteelMeasurement, 'id'> = {
         date: steelMeasurementData.date,
         shift: steelMeasurementData.shift,
-        drillNumber: steelMeasurementData.drillNumber,
-        adaptadorInferiorMedio: parseDecimal(steelMeasurementData.adaptadorInferiorMedio),
-        barraPateraSuperior: parseDecimal(steelMeasurementData.barraPateraSuperior),
-        barraPateraMedio: parseDecimal(steelMeasurementData.barraPateraMedio),
-        barraPateraInferior: parseDecimal(steelMeasurementData.barraPateraInferior),
-        barraSeguidora1Superior: parseDecimal(steelMeasurementData.barraSeguidora1Superior),
-        barraSeguidora1Medio: parseDecimal(steelMeasurementData.barraSeguidora1Medio),
-        barraSeguidora1Inferior: parseDecimal(steelMeasurementData.barraSeguidora1Inferior),
-        barraSeguidora2Superior: parseDecimal(steelMeasurementData.barraSeguidora2Superior),
-        barraSeguidora2Medio: parseDecimal(steelMeasurementData.barraSeguidora2Medio),
-        barraSeguidora2Inferior: parseDecimal(steelMeasurementData.barraSeguidora2Inferior),
-        barraSeguidora3Superior: parseDecimal(steelMeasurementData.barraSeguidora3Superior),
-        barraSeguidora3Medio: parseDecimal(steelMeasurementData.barraSeguidora3Medio),
-        barraSeguidora3Inferior: parseDecimal(steelMeasurementData.barraSeguidora3Inferior),
-        barraSeguidora4Superior: parseDecimal(steelMeasurementData.barraSeguidora4Superior),
-        barraSeguidora4Medio: parseDecimal(steelMeasurementData.barraSeguidora4Medio),
-        barraSeguidora4Inferior: parseDecimal(steelMeasurementData.barraSeguidora4Inferior),
-        barraSeguidora5Superior: parseDecimal(steelMeasurementData.barraSeguidora5Superior),
-        barraSeguidora5Medio: parseDecimal(steelMeasurementData.barraSeguidora5Medio),
-        barraSeguidora5Inferior: parseDecimal(steelMeasurementData.barraSeguidora5Inferior),
+        drillNumber: drill,
+        adaptadorInferiorMedio: normalizeMeasurementToMm(steelMeasurementData.adaptadorInferiorMedio, drill, true),
+        barraPateraSuperior: normalizeMeasurementToMm(steelMeasurementData.barraPateraSuperior, drill, false),
+        barraPateraMedio: normalizeMeasurementToMm(steelMeasurementData.barraPateraMedio, drill, false),
+        barraPateraInferior: normalizeMeasurementToMm(steelMeasurementData.barraPateraInferior, drill, false),
+        barraSeguidora1Superior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora1Superior, drill, false),
+        barraSeguidora1Medio: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora1Medio, drill, false),
+        barraSeguidora1Inferior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora1Inferior, drill, false),
+        barraSeguidora2Superior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora2Superior, drill, false),
+        barraSeguidora2Medio: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora2Medio, drill, false),
+        barraSeguidora2Inferior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora2Inferior, drill, false),
+        barraSeguidora3Superior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora3Superior, drill, false),
+        barraSeguidora3Medio: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora3Medio, drill, false),
+        barraSeguidora3Inferior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora3Inferior, drill, false),
+        barraSeguidora4Superior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora4Superior, drill, false),
+        barraSeguidora4Medio: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora4Medio, drill, false),
+        barraSeguidora4Inferior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora4Inferior, drill, false),
+        barraSeguidora5Superior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora5Superior, drill, false),
+        barraSeguidora5Medio: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora5Medio, drill, false),
+        barraSeguidora5Inferior: normalizeMeasurementToMm(steelMeasurementData.barraSeguidora5Inferior, drill, false),
         comentarios: steelMeasurementData.comentarios || '',
         synced: 0,
         createdAt: Date.now()
@@ -708,26 +982,42 @@ const App: React.FC = () => {
 
 
 
-  // Descargar mediciones de acero desde Google Sheets
+  // Descargar mediciones de acero desde Google Sheets (solo si hay conexión)
   const downloadSteelMeasurementsFromSheet = async () => {
+    if (!navigator.onLine) {
+      console.log('Modo sin conexión: usando mediciones de acero guardadas localmente.');
+      return;
+    }
     try {
       setLoadingDiameters(true);
-      const response = await fetch(`${GAS_URL}?action=getSteelMeasurements`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const response = await fetch(`${GAS_URL}?action=getSteelMeasurements`, { signal: controller.signal });
+      clearTimeout(timeoutId);
       const result = await response.json();
       if (result.success && result.measurements) {
         setDiametersData(result.measurements);
+        try {
+          localStorage.setItem('lomasbayas_cached_diametersData', JSON.stringify(result.measurements));
+        } catch {
+          // ignore
+        }
       }
     } catch (error) {
-      console.error('Error descargando mediciones de acero:', error);
+      console.warn('No se pudo descargar mediciones de acero desde la nube (usando datos locales):', error);
     } finally {
       setLoadingDiameters(false);
     }
   };
 
-  // Descargar eventos desde Google Sheets
+  // Descargar eventos desde Google Sheets (solo si hay conexión)
   const downloadEventsFromSheet = async (): Promise<Event[]> => {
+    if (!navigator.onLine) return [];
     try {
-      const response = await fetch(`${GAS_URL}?action=getEvents`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const response = await fetch(`${GAS_URL}?action=getEvents`, { signal: controller.signal });
+      clearTimeout(timeoutId);
       const result = await response.json();
       if (result.success && result.events) {
         console.log('Eventos descargados desde Excel:', result.events.length);
@@ -735,48 +1025,51 @@ const App: React.FC = () => {
       }
       return [];
     } catch (error) {
-      console.error('Error descargando eventos:', error);
+      console.warn('Error descargando eventos desde la nube:', error);
       return [];
     }
   };
 
   // Cargar eventos abiertos (con sincronización bidireccional)
   const loadOpenEvents = async () => {
-    // Primero cargar eventos locales
+    // 1. Siempre cargar primero los eventos locales de Dexie
     let localEvents = await db.events.where('closed').equals(0).toArray();
+    setOpenEvents(localEvents);
 
-    // Si hay conexión, descargar eventos del Excel y fusionar
-    if (navigator.onLine) {
-      try {
-        const remoteEvents = await downloadEventsFromSheet();
-
-        // Fusionar: agregar eventos remotos que no existen localmente
-        for (const remoteEvent of remoteEvents) {
-          if (remoteEvent.closed === 0) { // Solo eventos abiertos
-            // Buscar si ya existe localmente (por título y fecha para evitar duplicados)
-            const exists = localEvents.some(
-              local => local.title === remoteEvent.title && local.date === remoteEvent.date
-            );
-
-            if (!exists) {
-              // Agregar a la BD local
-              await db.events.add({
-                ...remoteEvent,
-                synced: 1 // Ya está sincronizado porque viene del Excel
-              });
-              console.log('Evento importado del Excel:', remoteEvent.title);
-            }
-          }
-        }
-
-        // Recargar eventos locales después de la fusión
-        localEvents = await db.events.where('closed').equals(0).toArray();
-      } catch (error) {
-        console.warn('Error sincronizando eventos desde Excel:', error);
-      }
+    // 2. Si no hay internet, quedarse únicamente con los datos locales
+    if (!navigator.onLine) {
+      return;
     }
 
-    setOpenEvents(localEvents);
+    // 3. Si hay conexión, descargar eventos del Excel y fusionar
+    try {
+      const remoteEvents = await downloadEventsFromSheet();
+
+      // Fusionar: agregar eventos remotos que no existen localmente
+      for (const remoteEvent of remoteEvents) {
+        if (remoteEvent.closed === 0) { // Solo eventos abiertos
+          // Buscar si ya existe localmente (por título y fecha para evitar duplicados)
+          const exists = localEvents.some(
+            local => local.title === remoteEvent.title && local.date === remoteEvent.date
+          );
+
+          if (!exists) {
+            // Agregar a la BD local
+            await db.events.add({
+              ...remoteEvent,
+              synced: 1 // Ya está sincronizado porque viene del Excel
+            });
+            console.log('Evento importado del Excel:', remoteEvent.title);
+          }
+        }
+      }
+
+      // Recargar eventos locales después de la fusión
+      localEvents = await db.events.where('closed').equals(0).toArray();
+      setOpenEvents(localEvents);
+    } catch (error) {
+      console.warn('Error sincronizando eventos desde Excel:', error);
+    }
   };
 
   // Guardar nuevo evento
@@ -1039,27 +1332,60 @@ const App: React.FC = () => {
     }
   };
 
-  // Descargar último inventario desde Google Sheets
+  // Descargar último inventario desde Google Sheets (solo si hay conexión)
   const downloadLastInventoryFromSheet = async () => {
+    if (!navigator.onLine) return null;
     try {
-      const response = await fetch(`${GAS_URL}?action=getLastInventory&t=${Date.now()}`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const response = await fetch(`${GAS_URL}?action=getLastInventory&t=${Date.now()}`, { signal: controller.signal });
+      clearTimeout(timeoutId);
       const result = await response.json();
       if (result.success && result.inventory) {
         return result.inventory;
       }
       return null;
     } catch (error) {
-      console.error('Error descargando inventario:', error);
+      console.warn('Error descargando inventario desde la nube:', error);
       return null;
     }
   };
 
-  // Cargar último registro de inventario (siempre desde Excel)
+  // Cargar último registro de inventario (en modo offline usa datos guardados localmente)
   const loadLastInventory = async () => {
     if (!navigator.onLine) {
-      setLastInventoryDate('sin señal');
-      setInventoryData(createEmptyInventory());
-      setInventoryObs({});
+      console.log('Modo sin conexión: cargando inventario desde almacenamiento local...');
+      try {
+        const lastLocal = await db.inventoryRecords.orderBy('id').last();
+        if (lastLocal) {
+          setLastInventoryDate(`${lastLocal.date} (Local)`);
+          const newData: Record<string, number> = {};
+          INVENTORY_CATEGORIES.forEach(cat => {
+            cat.items.forEach(item => {
+              const centralKey = `${item.key}_central` as keyof InventoryRecord;
+              const minaKey = `${item.key}_mina` as keyof InventoryRecord;
+              newData[`${item.key}_central`] = Number(lastLocal[centralKey]) || 0;
+              newData[`${item.key}_mina`] = Number(lastLocal[minaKey]) || 0;
+            });
+          });
+          setInventoryData(newData);
+          setInventoryObs(lastLocal.observations || {});
+        } else {
+          const cachedInv = localStorage.getItem('lomasbayas_cached_inventory');
+          if (cachedInv) {
+            const parsed = JSON.parse(cachedInv);
+            setLastInventoryDate(`${parsed.date || ''} (Caché local)`);
+            setInventoryData(parsed.data || createEmptyInventory());
+            setInventoryObs(parsed.observations || {});
+          } else {
+            setLastInventoryDate('Sin conexión (Sin datos locales)');
+            setInventoryData(createEmptyInventory());
+            setInventoryObs({});
+          }
+        }
+      } catch (err) {
+        console.warn('Error cargando inventario local:', err);
+      }
       setOpenSnRow(null);
       return;
     }
@@ -1085,6 +1411,17 @@ const App: React.FC = () => {
         setInventoryData(newData);
         setInventoryObs(remoteInventory.observations || {});
         setOpenSnRow(null);
+
+        // Guardar copia local en caché para soporte offline
+        try {
+          localStorage.setItem('lomasbayas_cached_inventory', JSON.stringify({
+            date: remoteInventory.date,
+            data: newData,
+            observations: remoteInventory.observations || {}
+          }));
+        } catch {
+          // ignore
+        }
       } else {
         setLastInventoryDate(null);
         setInventoryData(createEmptyInventory());
@@ -1092,10 +1429,17 @@ const App: React.FC = () => {
         setOpenSnRow(null);
       }
     } catch (error) {
-      console.warn('Error obteniendo inventario desde Excel:', error);
-      setLastInventoryDate('sin señal');
-      setInventoryData(createEmptyInventory());
-      setInventoryObs({});
+      console.warn('Error obteniendo inventario desde Excel, intentando local:', error);
+      try {
+        const lastLocal = await db.inventoryRecords.orderBy('id').last();
+        if (lastLocal) {
+          setLastInventoryDate(`${lastLocal.date} (Local)`);
+        } else {
+          setLastInventoryDate('sin señal');
+        }
+      } catch {
+        setLastInventoryDate('sin señal');
+      }
       setOpenSnRow(null);
     }
   };
@@ -1561,6 +1905,11 @@ const App: React.FC = () => {
                 <div
                   key={drill}
                   className="card"
+                  onClick={() => {
+                    if (diametersData[drill]) {
+                      setSelectedDrillForReport(drill);
+                    }
+                  }}
                   style={{
                     padding: '1rem',
                     marginBottom: 0,
@@ -1569,7 +1918,9 @@ const App: React.FC = () => {
                     justifyContent: 'space-between',
                     border: '1px solid var(--border)',
                     boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                    cursor: diametersData[drill] ? 'pointer' : 'default',
                   }}
+                  title={diametersData[drill] ? `Ver reporte de aceros de P${drill}` : undefined}
                 >
                   {/* Encabezado: Número y Modelo */}
                   <div>
@@ -2151,6 +2502,57 @@ const App: React.FC = () => {
             </div>
           </section>
 
+          {/* Banner de Rango Operativo y Detección Automática */}
+          {steelMeasurementData.drillNumber ? (
+            <div style={{
+              backgroundColor: '#f0f9ff',
+              border: '1px solid #bae6fd',
+              borderRadius: '8px',
+              padding: '0.75rem 1rem',
+              marginBottom: '1rem',
+              fontSize: '0.82rem',
+              color: '#0369a1'
+            }}>
+              <div style={{ fontWeight: 800, marginBottom: '0.3rem', display: 'flex', alignItems: 'center', gap: '0.4rem', flexWrap: 'wrap' }}>
+                <span>🎯 DETECCIÓN AUTOMÁTICA — PERFORADORA P{steelMeasurementData.drillNumber}</span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, backgroundColor: '#0284c7', color: 'white', padding: '0.1rem 0.45rem', borderRadius: '4px' }}>
+                  {DRILL_CONFIG[steelMeasurementData.drillNumber]?.model || 'Perforadora'}
+                </span>
+              </div>
+              <div style={{ color: '#0c4a6e', lineHeight: 1.45 }}>
+                {['8', '11', '14'].includes(steelMeasurementData.drillNumber) ? (
+                  <>
+                    • <strong>Barras (Patera y Seguidoras):</strong> 4 1/4" a 4 1/2" (108.0 a 114.3 mm)<br />
+                    • <strong>Martillo DTH:</strong> 5 1/5" a 6 1/8" (132.0 a 165.0 mm)
+                  </>
+                ) : ['9', '10'].includes(steelMeasurementData.drillNumber) ? (
+                  <>
+                    • <strong>Barras y Adaptador:</strong> 9 3/4" a 10 3/4" (248.0 a 273.0 mm)
+                  </>
+                ) : (
+                  <>
+                    • <strong>Barras y Adaptador:</strong> 7 5/8" a 8 5/8" (194.0 a 219.0 mm)
+                  </>
+                )}
+                <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#475569' }}>
+                  💡 Puedes ingresar las medidas tanto en <strong>milímetros</strong> (ej: 215 o 113.3) como en <strong>pulgadas</strong> decimales o fraccionarias (ej: 8.5 o 8 5/8). El sistema detecta y convierte automáticamente.
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div style={{
+              backgroundColor: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              borderRadius: '8px',
+              padding: '0.65rem 1rem',
+              marginBottom: '1rem',
+              fontSize: '0.8rem',
+              color: '#64748b'
+            }}>
+              ℹ️ Selecciona una perforadora para ver los rangos esperados de sus aceros (mm y pulgadas) y activar la detección automática.
+            </div>
+          )}
+
           {/* 1. Adaptador Inferior */}
           <section className="card">
             <div className="card-title">
@@ -2168,14 +2570,20 @@ const App: React.FC = () => {
               }}>1</span>
               <span>ADAPTADOR INFERIOR</span>
             </div>
-            <div className="form-group" style={{ maxWidth: '200px' }}>
-              <label>MEDIO (PULG)</label>
+            <div className="form-group" style={{ maxWidth: '280px' }}>
+              <label>MEDIO (mm o ")</label>
               <input
                 type="text"
-                inputMode="decimal"
+                inputMode="text"
                 onFocus={(e) => e.target.select()}
+                placeholder='Ej: 8.5" o 215mm'
                 value={steelMeasurementData.adaptadorInferiorMedio !== undefined && steelMeasurementData.adaptadorInferiorMedio !== null ? String(steelMeasurementData.adaptadorInferiorMedio) : ''}
-                onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, adaptadorInferiorMedio: cleanDecimalInput(e.target.value) as any })}
+                onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, adaptadorInferiorMedio: cleanMeasurementInput(e.target.value) as any })}
+              />
+              <MeasurementBadge
+                value={steelMeasurementData.adaptadorInferiorMedio}
+                drillNumber={steelMeasurementData.drillNumber}
+                isMartilloOrAdaptador={true}
               />
             </div>
           </section>
@@ -2197,42 +2605,60 @@ const App: React.FC = () => {
               }}>2</span>
               <span>BARRA PATERA</span>
             </div>
-            <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+            <div className="form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
               <div className="form-group">
-                <label>SUPERIOR (PULG)</label>
+                <label>SUPERIOR (mm o ")</label>
                 <input
                   type="text"
-                  inputMode="decimal"
+                  inputMode="text"
                   onFocus={(e) => e.target.select()}
+                  placeholder='Ej: 8.5" o 215mm'
                   value={steelMeasurementData.barraPateraSuperior !== undefined && steelMeasurementData.barraPateraSuperior !== null ? String(steelMeasurementData.barraPateraSuperior) : ''}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraSuperior: cleanDecimalInput(e.target.value) as any })}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraSuperior: cleanMeasurementInput(e.target.value) as any })}
+                />
+                <MeasurementBadge
+                  value={steelMeasurementData.barraPateraSuperior}
+                  drillNumber={steelMeasurementData.drillNumber}
+                  isMartilloOrAdaptador={false}
                 />
               </div>
               <div className="form-group">
-                <label>MEDIO (PULG)</label>
+                <label>MEDIO (mm o ")</label>
                 <input
                   type="text"
-                  inputMode="decimal"
+                  inputMode="text"
                   onFocus={(e) => e.target.select()}
+                  placeholder='Ej: 8.5" o 215mm'
                   value={steelMeasurementData.barraPateraMedio !== undefined && steelMeasurementData.barraPateraMedio !== null ? String(steelMeasurementData.barraPateraMedio) : ''}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraMedio: cleanDecimalInput(e.target.value) as any })}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraMedio: cleanMeasurementInput(e.target.value) as any })}
+                />
+                <MeasurementBadge
+                  value={steelMeasurementData.barraPateraMedio}
+                  drillNumber={steelMeasurementData.drillNumber}
+                  isMartilloOrAdaptador={false}
                 />
               </div>
               <div className="form-group">
-                <label style={{ color: 'var(--danger)' }}>INFERIOR (PULG)</label>
+                <label style={{ color: 'var(--danger)' }}>INFERIOR (mm o ")</label>
                 <input
                   type="text"
-                  inputMode="decimal"
+                  inputMode="text"
                   onFocus={(e) => e.target.select()}
+                  placeholder='Ej: 8.5" o 215mm'
                   value={steelMeasurementData.barraPateraInferior !== undefined && steelMeasurementData.barraPateraInferior !== null ? String(steelMeasurementData.barraPateraInferior) : ''}
-                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraInferior: cleanDecimalInput(e.target.value) as any })}
+                  onChange={(e) => setSteelMeasurementData({ ...steelMeasurementData, barraPateraInferior: cleanMeasurementInput(e.target.value) as any })}
+                />
+                <MeasurementBadge
+                  value={steelMeasurementData.barraPateraInferior}
+                  drillNumber={steelMeasurementData.drillNumber}
+                  isMartilloOrAdaptador={false}
                 />
               </div>
             </div>
           </section>
 
           {/* 3. Barras Seguidoras - dinámicas según perforadora */}
-          {/* Perforadoras 8, 11, 14 = 5 barras; Perforadoras 5, 9, 10, 12, 13 = 2 barras */}
+          {/* Perforadoras 8, 11, 14 = 5 barras; Perforadoras 5, 6, 7, 9, 10, 12, 13 = 2 barras */}
           {[1, 2, 3, 4, 5].map((num) => {
             const drill = steelMeasurementData.drillNumber;
             const has5Barras = ['8', '11', '14'].includes(drill);
@@ -2261,44 +2687,62 @@ const App: React.FC = () => {
                   }}>{num + 2}</span>
                   <span>BARRA SEGUIDORA {num}</span>
                 </div>
-                <div className="form-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+                <div className="form-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
                   <div className="form-group">
-                    <label>SUPERIOR (PULG)</label>
+                    <label>SUPERIOR (mm o ")</label>
                     <input
                       type="text"
-                      inputMode="decimal"
+                      inputMode="text"
                       onFocus={(e) => e.target.select()}
+                      placeholder='Ej: 8.5" o 215mm'
                       value={steelMeasurementData[supKey] !== undefined && steelMeasurementData[supKey] !== null ? String(steelMeasurementData[supKey]) : ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [supKey]: cleanDecimalInput(e.target.value) as any
+                        [supKey]: cleanMeasurementInput(e.target.value) as any
                       })}
+                    />
+                    <MeasurementBadge
+                      value={steelMeasurementData[supKey] as any}
+                      drillNumber={steelMeasurementData.drillNumber}
+                      isMartilloOrAdaptador={false}
                     />
                   </div>
                   <div className="form-group">
-                    <label>MEDIO (PULG)</label>
+                    <label>MEDIO (mm o ")</label>
                     <input
                       type="text"
-                      inputMode="decimal"
+                      inputMode="text"
                       onFocus={(e) => e.target.select()}
+                      placeholder='Ej: 8.5" o 215mm'
                       value={steelMeasurementData[medKey] !== undefined && steelMeasurementData[medKey] !== null ? String(steelMeasurementData[medKey]) : ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [medKey]: cleanDecimalInput(e.target.value) as any
+                        [medKey]: cleanMeasurementInput(e.target.value) as any
                       })}
+                    />
+                    <MeasurementBadge
+                      value={steelMeasurementData[medKey] as any}
+                      drillNumber={steelMeasurementData.drillNumber}
+                      isMartilloOrAdaptador={false}
                     />
                   </div>
                   <div className="form-group">
-                    <label>INFERIOR (PULG)</label>
+                    <label>INFERIOR (mm o ")</label>
                     <input
                       type="text"
-                      inputMode="decimal"
+                      inputMode="text"
                       onFocus={(e) => e.target.select()}
+                      placeholder='Ej: 8.5" o 215mm'
                       value={steelMeasurementData[infKey] !== undefined && steelMeasurementData[infKey] !== null ? String(steelMeasurementData[infKey]) : ''}
                       onChange={(e) => setSteelMeasurementData({
                         ...steelMeasurementData,
-                        [infKey]: cleanDecimalInput(e.target.value) as any
+                        [infKey]: cleanMeasurementInput(e.target.value) as any
                       })}
+                    />
+                    <MeasurementBadge
+                      value={steelMeasurementData[infKey] as any}
+                      drillNumber={steelMeasurementData.drillNumber}
+                      isMartilloOrAdaptador={false}
                     />
                   </div>
                 </div>
@@ -3760,6 +4204,29 @@ const App: React.FC = () => {
           <span>Técnico</span>
         </a>
       </nav>
+
+      {/* Notificación flotante para evitar cierre accidental al pulsar Atrás en la pantalla de inicio */}
+      {showExitToast && (
+        <div style={{
+          position: 'fixed',
+          bottom: '75px',
+          left: '50%',
+          transform: 'translateX(-50%)',
+          backgroundColor: 'rgba(15, 23, 42, 0.94)',
+          color: '#f8fafc',
+          padding: '0.6rem 1.25rem',
+          borderRadius: '9999px',
+          fontSize: '0.85rem',
+          fontWeight: 700,
+          zIndex: 99999,
+          boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap',
+          border: '1px solid #334155'
+        }}>
+          Presiona atrás nuevamente para salir
+        </div>
+      )}
     </div>
   );
 };

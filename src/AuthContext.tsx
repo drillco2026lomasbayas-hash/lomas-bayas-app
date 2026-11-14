@@ -124,8 +124,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchProfile(session.user.id);
-        verifySessionOnline();
+        // Comprobar si hay conexión: en modo offline NO llamar a la nube y usar perfil local
+        if (navigator.onLine) {
+          fetchProfile(session.user.id);
+          verifySessionOnline();
+        } else {
+          try {
+            const cachedProfile = localStorage.getItem(LOCAL_PROFILE_KEY);
+            if (cachedProfile) {
+              setProfile(JSON.parse(cachedProfile));
+            }
+          } catch {
+            // ignore
+          }
+        }
       } else {
         // En modo offline, si hay un perfil en caché guardado del login anterior, mantenerlo
         try {

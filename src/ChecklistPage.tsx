@@ -100,23 +100,43 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
   const [filterDrill, setFilterDrill] = useState('ALL');
 
   const loadHistory = async () => {
-    if (!isOnline || !gasUrl || gasUrl.includes('TU_URL')) {
-      alert("No hay conexión a internet o no se ha configurado la URL del servidor.");
+    // Si estamos sin conexión, cargar historial exclusivamente desde almacenamiento local (Dexie)
+    if (!navigator.onLine) {
+      console.log('Modo sin conexión: cargando historial de checklist desde Dexie local...');
+      try {
+        const localChecklists = await db.checklists.toArray();
+        setHistory(localChecklists || []);
+      } catch (err) {
+        console.error('Error cargando checklists locales:', err);
+      }
+      return;
+    }
+
+    if (!gasUrl || gasUrl.includes('TU_URL')) {
       return;
     }
     setLoadingHistory(true);
     try {
-      const res = await fetch(`${gasUrl}?action=getChecklists`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(`${gasUrl}?action=getChecklists`, { signal: controller.signal });
+      clearTimeout(timeoutId);
       const json = await res.json();
       if (json.success) {
         setHistory(json.checklists || []);
       } else {
-        console.error("Error del servidor:", json.error);
-        alert("Error cargando historial desde el servidor.");
+        console.warn("Respuesta no exitosa del servidor:", json.error);
+        const localChecklists = await db.checklists.toArray();
+        setHistory(localChecklists || []);
       }
     } catch (error) {
-      console.error(error);
-      alert("Fallo al conectar con Google Sheets.");
+      console.warn("Fallo al conectar con la nube, cargando historial local:", error);
+      try {
+        const localChecklists = await db.checklists.toArray();
+        setHistory(localChecklists || []);
+      } catch (err) {
+        console.error(err);
+      }
     } finally {
       setLoadingHistory(false);
     }
