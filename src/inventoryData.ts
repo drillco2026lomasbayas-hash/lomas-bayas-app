@@ -1,8 +1,23 @@
-// Definición de items de inventario con categorías
+// Definición de items de inventario con categorías y modelos detallados
+// Operación Minera Lomas Bayas
+
+export interface InventorySubModel {
+    id: string;
+    name: string;
+    brand?: string;
+    sap?: string;
+    central: number;
+    mina: number;
+    sn?: string;
+}
+
 export interface InventoryItem {
     key: string;
     name: string;
     sap: string;
+    subtitle?: string;
+    minStock?: number;
+    defaultModels?: InventorySubModel[];
 }
 
 export interface InventoryCategory {
@@ -10,7 +25,47 @@ export interface InventoryCategory {
     items: InventoryItem[];
 }
 
+// Modelos por defecto para Triconos según faena Lomas Bayas
+export const DEFAULT_SUB_MODELS: Record<string, InventorySubModel[]> = {
+    tricono_10: [
+        { id: 'wls65s', name: 'TRICONO Ø 10 5/8 WLS65S (S875) BECO', brand: 'WLS - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'sga645', name: 'TRICONO Ø 10 5/8 SGA645GF Z01 BECO', brand: 'Shereate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 10 },
+        { id: 'sgv715', name: 'TRICONO Ø 10 5/8 SGV715RF BECO', brand: 'Shereate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 2 },
+        { id: 'sgv615', name: 'TRICONO Ø 10 5/8 SGV615RF BECO', brand: 'Shereate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'sgv535', name: 'TRICONO Ø 10 5/8 SGV535R BECO', brand: 'Shereate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
+    ],
+    tricono_12: [
+        { id: 'tri12_1', name: 'TRICONO Ø 12 1/4 SGA645 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 5 },
+        { id: 'tri12_2', name: 'TRICONO Ø 12 1/4 SGV715 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 3 },
+        { id: 'tri12_3', name: 'TRICONO Ø 12 1/4 SGV615 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 2 },
+        { id: 'tri12_4', name: 'TRICONO Ø 12 1/4 SGV535 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'tri12_5', name: 'TRICONO Ø 12 1/4 WLS65S BECO', brand: 'WLS - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'tri12_6', name: 'TRICONO Ø 12 1/4 H735 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
+    ]
+};
+
 export const INVENTORY_CATEGORIES: InventoryCategory[] = [
+    {
+        name: 'TRICONOS',
+        items: [
+            {
+                key: 'tricono_10',
+                name: 'TRICONO DRILLCO 10-5/8" PIN BECO 6',
+                sap: '33030719',
+                subtitle: 'Ø 10 5/8" • Bodega Mina (Curva 4)',
+                minStock: 10,
+                defaultModels: DEFAULT_SUB_MODELS.tricono_10
+            },
+            {
+                key: 'tricono_12',
+                name: 'TRICONO DRILLCO 12-1/4" PIN BECO 6',
+                sap: '33030718',
+                subtitle: 'Ø 12 1/4" • Bodega Mina (Curva 4)',
+                minStock: 26,
+                defaultModels: DEFAULT_SUB_MODELS.tricono_12
+            },
+        ]
+    },
     {
         name: 'ROC 8,11 y 14',
         items: [
@@ -19,13 +74,6 @@ export const INVENTORY_CATEGORIES: InventoryCategory[] = [
             { key: 'roc_amortP68', name: 'P6-8 Amort. HD 3 1/2" ATSM x 3 1/2" RegH', sap: '1135753' },
             { key: 'roc_adaptador114', name: 'Ø114.3 3 beco M x 3 beco H L=305', sap: '1135752' },
             { key: 'roc_barras45', name: 'Barras 4 ½ x 6000mm x 6.35 3 beco', sap: '1135751' },
-        ]
-    },
-    {
-        name: 'TRICONOS',
-        items: [
-            { key: 'tricono_10', name: 'BIT,DRIL;TRICONE,DIA 10-5/8 IN', sap: '1140327' },
-            { key: 'tricono_12', name: 'BIT,DRIL;TRICONE,DIA 12-1/4 IN', sap: '1151231' },
         ]
     },
     {
@@ -70,14 +118,34 @@ export const INVENTORY_CATEGORIES: InventoryCategory[] = [
     }
 ];
 
-// Crear objeto inicial de inventario con todos los valores en 0
+// Crear objeto inicial de inventario con todos los valores en 0 (considerando modelos si existen)
 export function createEmptyInventory(): Record<string, number> {
     const inventory: Record<string, number> = {};
     INVENTORY_CATEGORIES.forEach(cat => {
         cat.items.forEach(item => {
-            inventory[`${item.key}_central`] = 0;
-            inventory[`${item.key}_mina`] = 0;
+            if (item.defaultModels && item.defaultModels.length > 0) {
+                const totalCentral = item.defaultModels.reduce((s, m) => s + (m.central || 0), 0);
+                const totalMina = item.defaultModels.reduce((s, m) => s + (m.mina || 0), 0);
+                inventory[`${item.key}_central`] = totalCentral;
+                inventory[`${item.key}_mina`] = totalMina;
+            } else {
+                inventory[`${item.key}_central`] = 0;
+                inventory[`${item.key}_mina`] = 0;
+            }
         });
     });
     return inventory;
+}
+
+// Crear modelos iniciales por defecto
+export function createInitialSubModels(): Record<string, InventorySubModel[]> {
+    const models: Record<string, InventorySubModel[]> = {};
+    INVENTORY_CATEGORIES.forEach(cat => {
+        cat.items.forEach(item => {
+            if (item.defaultModels) {
+                models[item.key] = JSON.parse(JSON.stringify(item.defaultModels));
+            }
+        });
+    });
+    return models;
 }

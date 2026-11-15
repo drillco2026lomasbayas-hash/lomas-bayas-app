@@ -13,10 +13,18 @@ import {
   Home,
   Camera,
   Image as ImageIcon,
-  History
+  History,
+  Plus,
+  Pencil,
+  ChevronDown,
+  ChevronRight,
+  ArrowUp,
+  ArrowDown,
+  CheckCircle,
+  AlertTriangle
 } from 'lucide-react';
 import { db, type WellRecord, type ShiftReport, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard, type DrillStatusRecord } from './db';
-import { INVENTORY_CATEGORIES, createEmptyInventory } from './inventoryData';
+import { INVENTORY_CATEGORIES, createEmptyInventory, createInitialSubModels, type InventorySubModel } from './inventoryData';
 import './index.css';
 import DrillReportModal from './DrillReportModal';
 import { ChecklistPage } from './ChecklistPage';
@@ -26,6 +34,8 @@ import { useAuth } from './AuthContext';
 import { LoginView } from './LoginView';
 import { AdminPanel } from './AdminPanel';
 import { RecentRecordsModal } from './RecentRecordsModal';
+import { InventoryPdfModal } from './InventoryPdfModal';
+import { InventoryModelModal } from './InventoryModelModal';
 import { getDrillWorstWear } from './utils/steelUtils';
 import { formatDateSafe } from './utils/dateUtils';
 
@@ -478,6 +488,45 @@ const App: React.FC = () => {
 
   // Estado para Inventario
   const [inventoryData, setInventoryData] = useState<Record<string, number>>(createEmptyInventory());
+  const [subModelsData, setSubModelsData] = useState<Record<string, InventorySubModel[]>>(() => {
+    try {
+      const cached = localStorage.getItem('lomasbayas_cached_inventory');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed.subModels && Object.keys(parsed.subModels).length > 0) {
+          return parsed.subModels;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return createInitialSubModels();
+  });
+  const [collapsedModelGroups, setCollapsedModelGroups] = useState<Record<string, boolean>>({
+    tricono_12: true
+  });
+  const [modelModalData, setModelModalData] = useState<{
+    isOpen: boolean;
+    itemKey: string;
+    itemName: string;
+    model: InventorySubModel | null;
+  }>({
+    isOpen: false,
+    itemKey: '',
+    itemName: '',
+    model: null
+  });
+  const [pdfPreviewModal, setPdfPreviewModal] = useState<{
+    isOpen: boolean;
+    url: string | null;
+    fileName: string;
+    doc: any | null;
+  }>({
+    isOpen: false,
+    url: null,
+    fileName: '',
+    doc: null
+  });
   const [inventoryObs, setInventoryObs] = useState<Record<string, string>>({});
   const [openSnRow, setOpenSnRow] = useState<string | null>(null);
   const [inventoryDate, setInventoryDate] = useState(new Date().toISOString().split('T')[0]);
@@ -1473,6 +1522,94 @@ const App: React.FC = () => {
     }
   };
 
+  // Manejadores para Modelos de Inventario
+  const toggleCollapseModelGroup = (itemKey: string) => {
+    setCollapsedModelGroups(prev => ({
+      ...prev,
+      [itemKey]: !prev[itemKey]
+    }));
+  };
+
+  const handleUpdateSubModelStock = (itemKey: string, modelId: string, delta: number) => {
+    setSubModelsData(prev => {
+      const currentList = prev[itemKey] || [];
+      const updatedList = currentList.map(m => {
+        if (m.id === modelId) {
+          const newMina = Math.max(0, (m.mina || 0) + delta);
+          return { ...m, mina: newMina };
+        }
+        return m;
+      });
+
+      const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
+      setInventoryData(inv => ({
+        ...inv,
+        [`${itemKey}_mina`]: totalMina
+      }));
+
+      return {
+        ...prev,
+        [itemKey]: updatedList
+      };
+    });
+  };
+
+  const handleSaveSubModel = (itemKey: string, model: InventorySubModel) => {
+    setSubModelsData(prev => {
+      const currentList = prev[itemKey] || [];
+      const existsIndex = currentList.findIndex(m => m.id === model.id);
+      let updatedList: InventorySubModel[];
+
+      if (existsIndex >= 0) {
+        updatedList = [...currentList];
+        updatedList[existsIndex] = model;
+      } else {
+        updatedList = [...currentList, model];
+      }
+
+      const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
+      const totalCentral = updatedList.reduce((sum, m) => sum + (m.central || 0), 0);
+      setInventoryData(inv => ({
+        ...inv,
+        [`${itemKey}_mina`]: totalMina,
+        [`${itemKey}_central`]: totalCentral
+      }));
+
+      return {
+        ...prev,
+        [itemKey]: updatedList
+      };
+    });
+
+    setModelModalData({
+      isOpen: false,
+      itemKey: '',
+      itemName: '',
+      model: null
+    });
+  };
+
+  const handleDeleteSubModel = (itemKey: string, modelId: string) => {
+    if (!confirm('¿Está seguro de eliminar este modelo del inventario?')) return;
+    setSubModelsData(prev => {
+      const currentList = prev[itemKey] || [];
+      const updatedList = currentList.filter(m => m.id !== modelId);
+
+      const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
+      const totalCentral = updatedList.reduce((sum, m) => sum + (m.central || 0), 0);
+      setInventoryData(inv => ({
+        ...inv,
+        [`${itemKey}_mina`]: totalMina,
+        [`${itemKey}_central`]: totalCentral
+      }));
+
+      return {
+        ...prev,
+        [itemKey]: updatedList
+      };
+    });
+  };
+
   // Cargar último registro de inventario (en modo offline usa datos guardados localmente)
   const loadLastInventory = async () => {
     if (!navigator.onLine) {
@@ -1492,6 +1629,9 @@ const App: React.FC = () => {
           });
           setInventoryData(newData);
           setInventoryObs(lastLocal.observations || {});
+          if (lastLocal.subModels && Object.keys(lastLocal.subModels).length > 0) {
+            setSubModelsData(lastLocal.subModels);
+          }
         } else {
           const cachedInv = localStorage.getItem('lomasbayas_cached_inventory');
           if (cachedInv) {
@@ -1499,10 +1639,14 @@ const App: React.FC = () => {
             setLastInventoryDate(`${parsed.date || ''} (Caché local)`);
             setInventoryData(parsed.data || createEmptyInventory());
             setInventoryObs(parsed.observations || {});
+            if (parsed.subModels && Object.keys(parsed.subModels).length > 0) {
+              setSubModelsData(parsed.subModels);
+            }
           } else {
             setLastInventoryDate('Sin conexión (Sin datos locales)');
             setInventoryData(createEmptyInventory());
             setInventoryObs({});
+            setSubModelsData(createInitialSubModels());
           }
         }
       } catch (err) {
@@ -1532,6 +1676,18 @@ const App: React.FC = () => {
 
         setInventoryData(newData);
         setInventoryObs(remoteInventory.observations || {});
+
+        // Cargar modelos remotos o mantener locales
+        if (remoteInventory.subModels && Object.keys(remoteInventory.subModels).length > 0) {
+          setSubModelsData(remoteInventory.subModels);
+        } else {
+          try {
+            const lastLocal = await db.inventoryRecords.orderBy('id').last();
+            if (lastLocal?.subModels && Object.keys(lastLocal.subModels).length > 0) {
+              setSubModelsData(lastLocal.subModels);
+            }
+          } catch {}
+        }
         setOpenSnRow(null);
 
         // Guardar copia local en caché para soporte offline
@@ -1539,7 +1695,8 @@ const App: React.FC = () => {
           localStorage.setItem('lomasbayas_cached_inventory', JSON.stringify({
             date: remoteInventory.date,
             data: newData,
-            observations: remoteInventory.observations || {}
+            observations: remoteInventory.observations || {},
+            subModels: subModelsData
           }));
         } catch {
           // ignore
@@ -1548,6 +1705,7 @@ const App: React.FC = () => {
         setLastInventoryDate(null);
         setInventoryData(createEmptyInventory());
         setInventoryObs({});
+        setSubModelsData(createInitialSubModels());
         setOpenSnRow(null);
       }
     } catch (error) {
@@ -1556,6 +1714,9 @@ const App: React.FC = () => {
         const lastLocal = await db.inventoryRecords.orderBy('id').last();
         if (lastLocal) {
           setLastInventoryDate(`${lastLocal.date} (Local)`);
+          if (lastLocal.subModels && Object.keys(lastLocal.subModels).length > 0) {
+            setSubModelsData(lastLocal.subModels);
+          }
         } else {
           setLastInventoryDate('sin señal');
         }
@@ -1573,12 +1734,22 @@ const App: React.FC = () => {
         date: inventoryDate,
         ...inventoryData,
         observations: inventoryObs,
+        subModels: subModelsData,
         synced: 0,
         createdAt: Date.now()
       } as Omit<InventoryRecord, 'id'>;
 
       console.log('Guardando inventario...', record);
       await db.inventoryRecords.add(record);
+
+      try {
+        localStorage.setItem('lomasbayas_cached_inventory', JSON.stringify({
+          date: inventoryDate,
+          data: inventoryData,
+          observations: inventoryObs,
+          subModels: subModelsData
+        }));
+      } catch {}
 
       // Feedback visual
       const btn = document.querySelector('.btn-save-inventory');
@@ -1603,9 +1774,7 @@ const App: React.FC = () => {
     }
   };
 
-
-
-  // Generar PDF del inventario actual en pantalla
+  // Generar PDF del inventario actual en pantalla con previsualización
   const generateInventoryPDF = async () => {
     // Tomamos la fecha actual en la que esté seteado el calendario
     if (!inventoryDate && !lastInventoryDate) {
@@ -1663,21 +1832,57 @@ const App: React.FC = () => {
     const tableBody: any[] = [];
 
     INVENTORY_CATEGORIES.forEach((category) => {
-      category.items.forEach((item, idx) => {
+      let catRowCount = 0;
+      category.items.forEach(it => {
+        const models = subModelsData[it.key];
+        if (models && models.length > 0) {
+          catRowCount += 1 + models.length;
+        } else {
+          catRowCount += 1;
+        }
+      });
+
+      let isFirstInCat = true;
+
+      category.items.forEach((item) => {
         const centralKey = `${item.key}_central`;
         const minaKey = `${item.key}_mina`;
+        const models = subModelsData[item.key];
+        const hasModels = models && models.length > 0;
+
         const centralVal = (inventoryData[centralKey] as number) || 0;
         const minaVal = (inventoryData[minaKey] as number) || 0;
         const total = centralVal + minaVal;
 
+        const catCell = isFirstInCat
+          ? { content: category.name, rowSpan: catRowCount, styles: { fontStyle: 'bold', fillColor: [235, 240, 250], valign: 'middle', cellWidth: 38 } }
+          : null;
+        isFirstInCat = false;
+
         tableBody.push([
-          idx === 0 ? { content: category.name, rowSpan: category.items.length, styles: { fontStyle: 'bold', fillColor: [235, 240, 250], valign: 'middle', cellWidth: 42 } } : null,
-          item.name,
-          item.sap,
-          { content: centralVal.toString(), styles: { halign: 'center' } },
-          { content: minaVal.toString(), styles: { halign: 'center' } },
-          { content: total.toString(), styles: { halign: 'center', fontStyle: 'bold' } }
+          catCell,
+          { content: item.name, styles: { fontStyle: hasModels ? 'bold' : 'normal', fillColor: hasModels ? [254, 249, 231] : undefined } },
+          { content: item.sap, styles: { halign: 'center', fillColor: hasModels ? [254, 249, 231] : undefined } },
+          { content: centralVal.toString(), styles: { halign: 'center', fontStyle: hasModels ? 'bold' : 'normal', fillColor: hasModels ? [254, 249, 231] : undefined } },
+          { content: minaVal.toString(), styles: { halign: 'center', fontStyle: hasModels ? 'bold' : 'normal', fillColor: hasModels ? [254, 249, 231] : undefined } },
+          { content: total.toString(), styles: { halign: 'center', fontStyle: 'bold', fillColor: hasModels ? [254, 249, 231] : undefined } }
         ].filter(cell => cell !== null));
+
+        if (hasModels) {
+          models.forEach((m) => {
+            const mCentral = m.central || 0;
+            const mMina = m.mina || 0;
+            const mTotal = mCentral + mMina;
+
+            tableBody.push([
+              { content: `   ↳ ${m.name}${m.brand ? ` (${m.brand})` : ''}`, styles: { textColor: [70, 70, 70], fontSize: 7.5 } },
+              { content: m.sap || 'Del SAP', styles: { halign: 'center', fontSize: 7.5, textColor: [100, 100, 100] } },
+              { content: mCentral.toString(), styles: { halign: 'center', fontSize: 7.5 } },
+              { content: mMina.toString(), styles: { halign: 'center', fontSize: 7.5 } },
+              { content: mTotal.toString(), styles: { halign: 'center', fontSize: 7.5, fontStyle: 'bold' } }
+            ]);
+          });
+        }
       });
     });
 
@@ -1685,7 +1890,7 @@ const App: React.FC = () => {
     autoTable(doc, {
       head: [[
         { content: 'Categoría', styles: { halign: 'center' } },
-        { content: 'Item', styles: { halign: 'left' } },
+        { content: 'Item / Modelo', styles: { halign: 'left' } },
         { content: 'N° SAP', styles: { halign: 'center' } },
         { content: 'Bod. Central', styles: { halign: 'center' } },
         { content: 'Bod. Mina', styles: { halign: 'center' } },
@@ -1696,8 +1901,8 @@ const App: React.FC = () => {
       theme: 'grid',
       styles: {
         fontSize: 8,
-        cellPadding: 2.5,
-        lineColor: [200, 200, 200],
+        cellPadding: 2,
+        lineColor: [210, 215, 225],
         lineWidth: 0.2,
       },
       headStyles: {
@@ -1707,14 +1912,14 @@ const App: React.FC = () => {
         fontSize: 9,
       },
       alternateRowStyles: {
-        fillColor: [248, 250, 253]
+        fillColor: [250, 252, 255]
       },
       columnStyles: {
-        0: { cellWidth: 42 },
+        0: { cellWidth: 38 },
         1: { cellWidth: 'auto' },
-        2: { cellWidth: 24, halign: 'center' },
-        3: { cellWidth: 28, halign: 'center' },
-        4: { cellWidth: 28, halign: 'center' },
+        2: { cellWidth: 26, halign: 'center' },
+        3: { cellWidth: 26, halign: 'center' },
+        4: { cellWidth: 26, halign: 'center' },
         5: { cellWidth: 24, halign: 'center' },
       },
       didDrawPage: () => {
@@ -1726,9 +1931,16 @@ const App: React.FC = () => {
       }
     });
 
-    // Save locally
+    // Abrir modal de previsualización en vez de descarga directa
     const fileName = `Inventario_${lastInventoryDate || inventoryDate}.pdf`;
-    doc.save(fileName);
+    const blob = doc.output('blob');
+    const blobUrl = URL.createObjectURL(blob);
+    setPdfPreviewModal({
+      isOpen: true,
+      url: blobUrl,
+      fileName,
+      doc
+    });
   };
 
   // Resetear formulario de descarte
@@ -3498,100 +3710,496 @@ const App: React.FC = () => {
             )}
           </section>
 
-          {/* Tabla de inventario */}
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', background: 'white' }}>
-              <thead>
-                <tr style={{ background: 'var(--primary)', color: 'white' }}>
-                  <th style={{ padding: '0.5rem', textAlign: 'left', position: 'sticky', left: 0, background: 'var(--primary)', minWidth: '80px' }}>Categoría</th>
-                  <th style={{ padding: '0.5rem', textAlign: 'left', minWidth: '200px' }}>Item</th>
-                  <th style={{ padding: '0.5rem', textAlign: 'center', minWidth: '70px' }}>N° SAP</th>
-                  <th style={{ padding: '0.5rem', textAlign: 'center', minWidth: '80px' }}>Bod. Central</th>
-                  <th style={{ padding: '0.5rem', textAlign: 'center', minWidth: '80px' }}>Bod. Mina</th>
-                </tr>
-              </thead>
-              <tbody>
-                {INVENTORY_CATEGORIES.map((category, catIdx) => {
-                  const hasExpandedChild = category.items.some(i => i.key === openSnRow);
-                  const newRowSpan = category.items.length + (hasExpandedChild ? 1 : 0);
+          {/* Lista e Inventario con Modelos y Categorías */}
+          <div style={{ overflowX: 'auto', background: 'white', borderRadius: '8px', border: '1px solid #e5e7eb', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+            <div style={{ minWidth: '820px' }}>
+              {INVENTORY_CATEGORIES.map((category) => (
+                <div key={category.name} style={{ marginBottom: '6px' }}>
+                  {/* Banner de Categoría */}
+                  <div style={{
+                    background: '#fff9db',
+                    borderLeft: '4px solid #f59e0b',
+                    padding: '8px 12px',
+                    fontWeight: 800,
+                    fontSize: '0.82rem',
+                    color: '#1f2937',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px'
+                  }}>
+                    {category.name}
+                  </div>
 
-                  return category.items.map((item, itemIdx) => (
-                    <React.Fragment key={item.key}>
-                      <tr style={{ borderBottom: '1px solid var(--border)', background: catIdx % 2 === 0 ? '#f8f9fa' : 'white' }}>
-                        {itemIdx === 0 && (
-                          <td
-                            rowSpan={newRowSpan}
-                            style={{
-                              padding: '0.5rem',
-                              fontWeight: 'bold',
-                              verticalAlign: 'middle',
-                              background: catIdx % 2 === 0 ? '#e9ecef' : '#f8f9fa',
-                              position: 'sticky',
-                              left: 0,
-                              fontSize: '0.75rem'
-                            }}
-                          >
-                            {category.name}
-                          </td>
-                        )}
-                        <td style={{ padding: '0.3rem 0.5rem', fontSize: '0.8rem' }}>{item.name}</td>
-                        <td style={{ padding: '0.3rem', textAlign: 'center', fontSize: '0.75rem', color: 'var(--text-light)' }}>{item.sap}</td>
-                        <td style={{ padding: '0.2rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
-                            <button
-                              onClick={() => setInventoryData({
-                                ...inventoryData,
-                                [`${item.key}_central`]: Math.max(0, (inventoryData[`${item.key}_central`] || 0) - 1)
-                              })}
-                              style={{
-                                width: '28px',
-                                height: '28px',
-                                border: '1px solid var(--border)',
-                                borderRadius: '4px',
-                                background: '#f8f9fa',
-                                cursor: 'pointer',
-                                fontWeight: 'bold',
-                                fontSize: '1rem'
-                              }}
-                            >−</button>
-                            <input
-                              type="number"
-                      onFocus={(e) => e.target.select()}
-                              min="0"
-                              value={inventoryData[`${item.key}_central`] || 0}
-                              onChange={(e) => setInventoryData({
-                                ...inventoryData,
-                                [`${item.key}_central`]: parseInt(e.target.value) || 0
-                              })}
-                              style={{
-                                width: '45px',
-                                padding: '0.25rem',
-                                textAlign: 'center',
-                                border: '1px solid var(--border)',
-                                borderRadius: '4px'
-                              }}
-                            />
-                            <button
-                              onClick={() => setInventoryData({
-                                ...inventoryData,
-                                [`${item.key}_central`]: (inventoryData[`${item.key}_central`] || 0) + 1
-                              })}
-                              style={{
-                                width: '28px',
-                                height: '28px',
-                                border: '1px solid var(--border)',
-                                borderRadius: '4px',
-                                background: '#f8f9fa',
-                                cursor: 'pointer',
-                                fontWeight: 'bold',
-                                fontSize: '1rem'
-                              }}
-                            >+</button>
+                  {/* Items de la Categoría */}
+                  {category.items.map((item) => {
+                    const models = subModelsData[item.key] || [];
+                    const hasModels = models.length > 0;
+                    const isCollapsed = !!collapsedModelGroups[item.key];
+                    const actualStock = (inventoryData[`${item.key}_mina`] || 0);
 
+                    if (hasModels) {
+                      return (
+                        <React.Fragment key={item.key}>
+                          {/* Fila Principal de Producto con Modelos */}
+                          <div style={{
+                            background: '#fff9db',
+                            borderBottom: '1px solid #fef08a',
+                            padding: '8px 12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            gap: '12px'
+                          }}>
+                            {/* Izquierda: Chevron + SAP + Nombre y Subtítulo */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                              <button
+                                onClick={() => toggleCollapseModelGroup(item.key)}
+                                style={{
+                                  background: 'none',
+                                  border: 'none',
+                                  padding: '2px',
+                                  cursor: 'pointer',
+                                  color: '#b45309',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center'
+                                }}
+                                title={isCollapsed ? 'Desagrupar' : 'Agrupar'}
+                              >
+                                {isCollapsed ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+                              </button>
+
+                              <span style={{
+                                background: '#fde047',
+                                color: '#854d0e',
+                                fontWeight: 800,
+                                fontSize: '0.8rem',
+                                padding: '3px 8px',
+                                borderRadius: '4px',
+                                letterSpacing: '0.5px',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {item.sap}
+                              </span>
+
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{
+                                  fontWeight: 800,
+                                  fontSize: '0.9rem',
+                                  color: '#111827',
+                                  whiteSpace: 'nowrap',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis'
+                                }}>
+                                  {item.name}
+                                </div>
+                                <div style={{ fontSize: '0.73rem', color: '#4b5563', marginTop: '1px' }}>
+                                  {item.subtitle || ''} {`• ${isCollapsed ? `${models.length} modelos agrupados (clic para desagrupar)` : `Mostrando ${models.length} modelos (clic para agrupar)`}`}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Centro y Derecha: ACTUAL, MÍNIMO, DIFF, AGRUPAR, + MODELO */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
+                              <div style={{ textAlign: 'center', minWidth: '50px' }}>
+                                <div style={{ fontSize: '1.15rem', fontWeight: 800, color: '#111827', lineHeight: 1 }}>
+                                  {actualStock}
+                                </div>
+                                <div style={{ fontSize: '0.62rem', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px' }}>
+                                  ACTUAL
+                                </div>
+                              </div>
+
+                              {item.minStock !== undefined ? (
+                                <>
+                                  <div style={{ textAlign: 'center', minWidth: '50px' }}>
+                                    <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#4b5563', lineHeight: 1 }}>
+                                      {item.minStock}
+                                    </div>
+                                    <div style={{ fontSize: '0.62rem', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px' }}>
+                                      MÍNIMO
+                                    </div>
+                                  </div>
+
+                                  {(() => {
+                                    const diff = actualStock - item.minStock;
+                                    const isPos = diff >= 0;
+                                    return (
+                                      <div style={{
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        gap: '4px',
+                                        padding: '3px 8px',
+                                        borderRadius: '6px',
+                                        fontSize: '0.8rem',
+                                        fontWeight: 800,
+                                        background: isPos ? '#d1fae5' : '#fee2e2',
+                                        color: isPos ? '#065f46' : '#991b1b',
+                                        border: `1px solid ${isPos ? '#a7f3d0' : '#fecaca'}`,
+                                        minWidth: '45px',
+                                        justifyContent: 'center'
+                                      }}>
+                                        {isPos ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
+                                        {diff > 0 ? `+${diff}` : diff}
+                                      </div>
+                                    );
+                                  })()}
+                                </>
+                              ) : (
+                                <div style={{ minWidth: '100px' }} />
+                              )}
+
+                              <button
+                                onClick={() => toggleCollapseModelGroup(item.key)}
+                                style={{
+                                  background: 'white',
+                                  border: '1px solid #d1d5db',
+                                  borderRadius: '6px',
+                                  padding: '5px 12px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 700,
+                                  color: '#374151',
+                                  cursor: 'pointer',
+                                  whiteSpace: 'nowrap'
+                                }}
+                              >
+                                {isCollapsed ? `Modelos (${models.length})` : 'Agrupar'}
+                              </button>
+
+                              <button
+                                onClick={() => setModelModalData({
+                                  isOpen: true,
+                                  itemKey: item.key,
+                                  itemName: item.name,
+                                  model: null
+                                })}
+                                style={{
+                                  background: '#f59e0b',
+                                  border: 'none',
+                                  borderRadius: '6px',
+                                  padding: '5px 12px',
+                                  fontSize: '0.78rem',
+                                  fontWeight: 700,
+                                  color: 'white',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  whiteSpace: 'nowrap'
+                                }}
+                              >
+                                <Plus size={14} /> Modelo
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Sub-modelos cuando no está colapsado */}
+                          {!isCollapsed && models.map((model) => (
+                            <div
+                              key={model.id}
+                              style={{
+                                background: '#ffffff',
+                                borderBottom: '1px dashed #e5e7eb',
+                                padding: '7px 12px 7px 32px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '12px'
+                              }}
+                            >
+                              {/* Izquierda: ↳ Modelo + Nombre + Marca */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                                <span style={{ fontSize: '0.75rem', color: '#6b7280', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                  ↳ Modelo
+                                </span>
+                                <div style={{ minWidth: 0 }}>
+                                  <div style={{
+                                    fontWeight: 800,
+                                    fontSize: '0.84rem',
+                                    color: '#111827',
+                                    whiteSpace: 'nowrap',
+                                    overflow: 'hidden',
+                                    textOverflow: 'ellipsis'
+                                  }}>
+                                    {model.name}
+                                  </div>
+                                  <div style={{ fontSize: '0.72rem', color: '#6b7280' }}>
+                                    {model.brand || ''}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Centro y Derecha: Cantidad, Del SAP, Acciones */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
+                                <div style={{ textAlign: 'center', minWidth: '45px' }}>
+                                  <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', lineHeight: 1 }}>
+                                    {model.mina}
+                                  </div>
+                                  <div style={{ fontSize: '0.62rem', fontWeight: 700, color: '#9ca3af', letterSpacing: '0.5px' }}>
+                                    UNID.
+                                  </div>
+                                </div>
+
+                                <div style={{ color: '#d1d5db', fontSize: '1rem', width: '45px', textAlign: 'center' }}>
+                                  —
+                                </div>
+
+                                <span style={{
+                                  background: '#eff6ff',
+                                  color: '#1d4ed8',
+                                  border: '1px solid #bfdbfe',
+                                  borderRadius: '4px',
+                                  padding: '2px 8px',
+                                  fontSize: '0.72rem',
+                                  fontWeight: 700,
+                                  whiteSpace: 'nowrap'
+                                }}>
+                                  {model.sap || 'Del SAP'}
+                                </span>
+
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <button
+                                    onClick={() => handleUpdateSubModelStock(item.key, model.id, 1)}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      padding: '4px 8px',
+                                      background: '#ecfdf5',
+                                      border: '1px solid #a7f3d0',
+                                      color: '#059669',
+                                      borderRadius: '5px',
+                                      fontSize: '0.73rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    title="Ingreso (+1)"
+                                  >
+                                    <ArrowUp size={13} /> Ingreso
+                                  </button>
+
+                                  <button
+                                    onClick={() => handleUpdateSubModelStock(item.key, model.id, -1)}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '3px',
+                                      padding: '4px 8px',
+                                      background: '#fef2f2',
+                                      border: '1px solid #fecaca',
+                                      color: '#dc2626',
+                                      borderRadius: '5px',
+                                      fontSize: '0.73rem',
+                                      fontWeight: 700,
+                                      cursor: 'pointer',
+                                      whiteSpace: 'nowrap'
+                                    }}
+                                    title="Retiro (-1)"
+                                  >
+                                    <ArrowDown size={13} /> Retiro
+                                  </button>
+
+                                  <button
+                                    onClick={() => setModelModalData({
+                                      isOpen: true,
+                                      itemKey: item.key,
+                                      itemName: item.name,
+                                      model
+                                    })}
+                                    style={{
+                                      background: 'white',
+                                      border: '1px solid #d1d5db',
+                                      color: '#4b5563',
+                                      padding: '5px',
+                                      borderRadius: '5px',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center'
+                                    }}
+                                    title="Editar modelo"
+                                  >
+                                    <Pencil size={13} />
+                                  </button>
+
+                                  <button
+                                    onClick={() => handleDeleteSubModel(item.key, model.id)}
+                                    style={{
+                                      background: 'white',
+                                      border: '1px solid #d1d5db',
+                                      color: '#ef4444',
+                                      padding: '5px',
+                                      borderRadius: '5px',
+                                      cursor: 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center'
+                                    }}
+                                    title="Eliminar modelo"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </React.Fragment>
+                      );
+                    }
+
+                    // Producto normal sin modelos configurados
+                    return (
+                      <React.Fragment key={item.key}>
+                        <div style={{
+                          background: '#ffffff',
+                          borderBottom: '1px solid var(--border)',
+                          padding: '8px 12px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: '12px'
+                        }}>
+                          {/* Izquierda: SAP + Nombre */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1, minWidth: 0 }}>
+                            <span style={{
+                              background: '#f3f4f6',
+                              color: '#374151',
+                              fontWeight: 700,
+                              fontSize: '0.75rem',
+                              padding: '3px 8px',
+                              borderRadius: '4px',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              {item.sap}
+                            </span>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{
+                                fontWeight: 600,
+                                fontSize: '0.82rem',
+                                color: '#111827',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}>
+                                {item.name}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Controles Bodega Central y Bodega Mina */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                            {/* Bodega Central */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: '0.7rem', color: '#6b7280', marginRight: '2px' }}>Central:</span>
+                              <button
+                                onClick={() => setInventoryData({
+                                  ...inventoryData,
+                                  [`${item.key}_central`]: Math.max(0, (inventoryData[`${item.key}_central`] || 0) - 1)
+                                })}
+                                style={{
+                                  width: '26px',
+                                  height: '26px',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: '4px',
+                                  background: '#f8f9fa',
+                                  cursor: 'pointer',
+                                  fontWeight: 'bold',
+                                  fontSize: '0.9rem'
+                                }}
+                              >−</button>
+                              <input
+                                type="number"
+                                onFocus={(e) => e.target.select()}
+                                min="0"
+                                value={inventoryData[`${item.key}_central`] || 0}
+                                onChange={(e) => setInventoryData({
+                                  ...inventoryData,
+                                  [`${item.key}_central`]: parseInt(e.target.value) || 0
+                                })}
+                                style={{
+                                  width: '40px',
+                                  padding: '0.2rem',
+                                  textAlign: 'center',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: '4px',
+                                  fontSize: '0.8rem'
+                                }}
+                              />
+                              <button
+                                onClick={() => setInventoryData({
+                                  ...inventoryData,
+                                  [`${item.key}_central`]: (inventoryData[`${item.key}_central`] || 0) + 1
+                                })}
+                                style={{
+                                  width: '26px',
+                                  height: '26px',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: '4px',
+                                  background: '#f8f9fa',
+                                  cursor: 'pointer',
+                                  fontWeight: 'bold',
+                                  fontSize: '0.9rem'
+                                }}
+                              >+</button>
+                            </div>
+
+                            {/* Bodega Mina */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: '0.7rem', color: '#6b7280', marginRight: '2px' }}>Mina:</span>
+                              <button
+                                onClick={() => setInventoryData({
+                                  ...inventoryData,
+                                  [`${item.key}_mina`]: Math.max(0, (inventoryData[`${item.key}_mina`] || 0) - 1)
+                                })}
+                                style={{
+                                  width: '26px',
+                                  height: '26px',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: '4px',
+                                  background: '#f8f9fa',
+                                  cursor: 'pointer',
+                                  fontWeight: 'bold',
+                                  fontSize: '0.9rem'
+                                }}
+                              >−</button>
+                              <input
+                                type="number"
+                                onFocus={(e) => e.target.select()}
+                                min="0"
+                                value={inventoryData[`${item.key}_mina`] || 0}
+                                onChange={(e) => setInventoryData({
+                                  ...inventoryData,
+                                  [`${item.key}_mina`]: parseInt(e.target.value) || 0
+                                })}
+                                style={{
+                                  width: '40px',
+                                  padding: '0.2rem',
+                                  textAlign: 'center',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: '4px',
+                                  fontSize: '0.8rem'
+                                }}
+                              />
+                              <button
+                                onClick={() => setInventoryData({
+                                  ...inventoryData,
+                                  [`${item.key}_mina`]: (inventoryData[`${item.key}_mina`] || 0) + 1
+                                })}
+                                style={{
+                                  width: '26px',
+                                  height: '26px',
+                                  border: '1px solid var(--border)',
+                                  borderRadius: '4px',
+                                  background: '#f8f9fa',
+                                  cursor: 'pointer',
+                                  fontWeight: 'bold',
+                                  fontSize: '0.9rem'
+                                }}
+                              >+</button>
+                            </div>
+
+                            {/* Botón SN */}
                             <button
                               onClick={() => setOpenSnRow(openSnRow === item.key ? null : item.key)}
                               style={{
-                                marginLeft: '6px',
                                 width: '28px',
                                 height: '28px',
                                 border: '1px solid var(--primary)',
@@ -3600,71 +4208,46 @@ const App: React.FC = () => {
                                 color: openSnRow === item.key ? 'white' : 'var(--primary)',
                                 cursor: 'pointer',
                                 fontWeight: 'bold',
-                                fontSize: '0.75rem',
+                                fontSize: '0.72rem',
                                 padding: 0
                               }}
+                              title="N° de Serie / Observaciones"
                             >
                               SN
                             </button>
-                          </div>
-                        </td>
-                        <td style={{ padding: '0.2rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '2px' }}>
+
+                            {/* Botón + Modelo */}
                             <button
-                              onClick={() => setInventoryData({
-                                ...inventoryData,
-                                [`${item.key}_mina`]: Math.max(0, (inventoryData[`${item.key}_mina`] || 0) - 1)
+                              onClick={() => setModelModalData({
+                                isOpen: true,
+                                itemKey: item.key,
+                                itemName: item.name,
+                                model: null
                               })}
                               style={{
-                                width: '28px',
-                                height: '28px',
-                                border: '1px solid var(--border)',
-                                borderRadius: '4px',
-                                background: '#f8f9fa',
+                                background: '#f59e0b',
+                                border: 'none',
+                                borderRadius: '5px',
+                                padding: '4px 8px',
+                                fontSize: '0.72rem',
+                                fontWeight: 700,
+                                color: 'white',
                                 cursor: 'pointer',
-                                fontWeight: 'bold',
-                                fontSize: '1rem'
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '3px',
+                                whiteSpace: 'nowrap'
                               }}
-                            >−</button>
-                            <input
-                              type="number"
-                      onFocus={(e) => e.target.select()}
-                              min="0"
-                              value={inventoryData[`${item.key}_mina`] || 0}
-                              onChange={(e) => setInventoryData({
-                                ...inventoryData,
-                                [`${item.key}_mina`]: parseInt(e.target.value) || 0
-                              })}
-                              style={{
-                                width: '45px',
-                                padding: '0.25rem',
-                                textAlign: 'center',
-                                border: '1px solid var(--border)',
-                                borderRadius: '4px'
-                              }}
-                            />
-                            <button
-                              onClick={() => setInventoryData({
-                                ...inventoryData,
-                                [`${item.key}_mina`]: (inventoryData[`${item.key}_mina`] || 0) + 1
-                              })}
-                              style={{
-                                width: '28px',
-                                height: '28px',
-                                border: '1px solid var(--border)',
-                                borderRadius: '4px',
-                                background: '#f8f9fa',
-                                cursor: 'pointer',
-                                fontWeight: 'bold',
-                                fontSize: '1rem'
-                              }}
-                            >+</button>
+                              title="Agregar modelo para este producto"
+                            >
+                              <Plus size={13} /> Modelo
+                            </button>
                           </div>
-                        </td>
-                      </tr>
-                      {openSnRow === item.key && (
-                        <tr style={{ background: '#fffbcc' }}>
-                          <td colSpan={4} style={{ padding: '0.5rem' }}>
+                        </div>
+
+                        {/* Campo de observaciones / SN cuando está abierto */}
+                        {openSnRow === item.key && (
+                          <div style={{ background: '#fffbcc', padding: '0.5rem 1rem', borderBottom: '1px solid #ffe066' }}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                               <label style={{ fontSize: '0.75rem', fontWeight: 'bold', color: '#856404' }}>
                                 Observaciones / N° Serie para {item.name}:
@@ -3683,14 +4266,14 @@ const App: React.FC = () => {
                                 }}
                               />
                             </div>
-                          </td>
-                        </tr>
-                      )}
-                    </React.Fragment>
-                  ));
-                })}
-              </tbody>
-            </table>
+                          </div>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '1rem', marginTop: '1rem' }}>
@@ -4409,6 +4992,34 @@ const App: React.FC = () => {
           }}
         />
       )}
+
+      {/* Modal Previsualización de PDF de Inventario */}
+      <InventoryPdfModal
+        isOpen={pdfPreviewModal.isOpen}
+        onClose={() => {
+          if (pdfPreviewModal.url) {
+            URL.revokeObjectURL(pdfPreviewModal.url);
+          }
+          setPdfPreviewModal({ isOpen: false, url: null, fileName: '', doc: null });
+        }}
+        pdfUrl={pdfPreviewModal.url}
+        fileName={pdfPreviewModal.fileName}
+        onDownload={() => {
+          if (pdfPreviewModal.doc) {
+            pdfPreviewModal.doc.save(pdfPreviewModal.fileName);
+          }
+        }}
+      />
+
+      {/* Modal Agregar / Editar Modelo de Producto */}
+      <InventoryModelModal
+        isOpen={modelModalData.isOpen}
+        onClose={() => setModelModalData({ isOpen: false, itemKey: '', itemName: '', model: null })}
+        itemKey={modelModalData.itemKey}
+        itemName={modelModalData.itemName}
+        modelToEdit={modelModalData.model}
+        onSave={handleSaveSubModel}
+      />
     </div>
   );
 };

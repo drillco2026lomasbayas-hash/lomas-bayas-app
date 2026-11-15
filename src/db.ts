@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import type { InventorySubModel } from './inventoryData';
 
 export interface WellRecord {
   id?: number;
@@ -103,6 +104,7 @@ export interface InventoryRecord {
   id?: number;
   date: string;
   observations?: Record<string, string>;
+  subModels?: Record<string, InventorySubModel[]>;
   // ROC 8,11 y 14
   roc_martPM62_central: number;
   roc_martPM62_mina: number;
