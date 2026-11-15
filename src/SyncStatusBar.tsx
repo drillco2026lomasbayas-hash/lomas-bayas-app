@@ -4,7 +4,11 @@ import { syncEngine, type SyncStatus } from './syncEngine';
 import { Wifi, WifiOff, RefreshCw, User, LogOut, CheckCircle2, CloudUpload } from 'lucide-react';
 import { AuthModal } from './AuthModal';
 
-export const SyncStatusBar: React.FC = () => {
+interface SyncStatusBarProps {
+  onOpenPending?: () => void;
+}
+
+export const SyncStatusBar: React.FC<SyncStatusBarProps> = ({ onOpenPending }) => {
   const { user, profile, isOffline, signOut } = useAuth();
   const [syncStatus, setSyncStatus] = useState<SyncStatus>({
     isSyncing: false,
@@ -62,27 +66,54 @@ export const SyncStatusBar: React.FC = () => {
               <span>Sincronizando con Supabase...</span>
             </div>
           ) : syncStatus.pendingCount > 0 ? (
-            <button
-              onClick={handleManualSync}
-              disabled={isOffline}
-              title="Clic para sincronizar con Supabase"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                backgroundColor: isOffline ? '#334155' : '#f59e0b',
-                color: isOffline ? '#94a3b8' : '#1a252f',
-                padding: '0.15rem 0.5rem',
-                borderRadius: '6px',
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                border: 'none',
-                cursor: isOffline ? 'not-allowed' : 'pointer'
-              }}
-            >
-              <CloudUpload size={13} />
-              <span>{syncStatus.pendingCount} pendiente{syncStatus.pendingCount > 1 ? 's' : ''}</span>
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+              <button
+                onClick={() => {
+                  if (onOpenPending) {
+                    onOpenPending();
+                  } else {
+                    handleManualSync();
+                  }
+                }}
+                title={onOpenPending ? "Clic para ver o gestionar registros pendientes" : "Clic para sincronizar con Supabase"}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  backgroundColor: '#f59e0b',
+                  color: '#1a252f',
+                  padding: '0.15rem 0.5rem',
+                  borderRadius: '6px',
+                  fontSize: '0.75rem',
+                  fontWeight: 700,
+                  border: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <CloudUpload size={13} />
+                <span>{syncStatus.pendingCount} pendiente{syncStatus.pendingCount > 1 ? 's' : ''}</span>
+              </button>
+              {!isOffline && (
+                <button
+                  onClick={handleManualSync}
+                  title="Sincronizar ahora con Supabase"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'rgba(255,255,255,0.12)',
+                    border: 'none',
+                    borderRadius: '4px',
+                    color: '#f8fafc',
+                    padding: '0.2rem 0.4rem',
+                    cursor: 'pointer',
+                    fontSize: '0.7rem'
+                  }}
+                >
+                  <RefreshCw size={11} />
+                </button>
+              )}
+            </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: '#94a3b8' }}>
               <CheckCircle2 size={13} color="#10b981" />

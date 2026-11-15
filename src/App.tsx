@@ -2255,7 +2255,7 @@ const App: React.FC = () => {
 
   return (
     <div>
-      <SyncStatusBar />
+      <SyncStatusBar onOpenPending={() => setShowRecentHistoryModal(true)} />
       <div style={{
         display: 'flex',
         justifyContent: 'space-between',

@@ -49,7 +49,7 @@ class SyncEngine {
     };
   }
 
-  private async emitStatus() {
+  public async emitStatus() {
     const pendingCount = await this.getPendingCount();
     const status: SyncStatus = {
       isSyncing: this.isSyncing,
@@ -58,6 +58,10 @@ class SyncEngine {
       error: this.lastError,
     };
     this.listeners.forEach((l) => l(status));
+  }
+
+  public async refreshStatus() {
+    await this.emitStatus();
   }
 
   // Cuenta cuántos registros locales están pendientes de sincronizar
