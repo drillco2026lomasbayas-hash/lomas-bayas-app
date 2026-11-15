@@ -28,19 +28,19 @@ export interface InventoryCategory {
 // Modelos por defecto para Triconos según faena Lomas Bayas
 export const DEFAULT_SUB_MODELS: Record<string, InventorySubModel[]> = {
     tricono_10: [
-        { id: 'wls65s', name: 'TRICONO Ø 10 5/8 WLS65S (S875) BECO', brand: 'WLS - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
-        { id: 'sga645', name: 'TRICONO Ø 10 5/8 SGA645GF Z01 BECO', brand: 'Shereate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 10 },
-        { id: 'sgv715', name: 'TRICONO Ø 10 5/8 SGV715RF BECO', brand: 'Shereate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 2 },
-        { id: 'sgv615', name: 'TRICONO Ø 10 5/8 SGV615RF BECO', brand: 'Shereate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
-        { id: 'sgv535', name: 'TRICONO Ø 10 5/8 SGV535R BECO', brand: 'Shereate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'sga645', name: 'TRICONO Ø 10 5/8 SGA645GF Z01 BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 10 },
+        { id: 'sgv715', name: 'TRICONO Ø 10 5/8 SGV715RF BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 2 },
+        { id: 'sgv615', name: 'TRICONO Ø 10 5/8 SGV615RF BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'sgv535', name: 'TRICONO Ø 10 5/8 SGV535R BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'sg735', name: 'TRICONO Ø 10 5/8 SG735 BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
     ],
     tricono_12: [
-        { id: 'tri12_1', name: 'TRICONO Ø 12 1/4 SGA645 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 5 },
-        { id: 'tri12_2', name: 'TRICONO Ø 12 1/4 SGV715 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 3 },
-        { id: 'tri12_3', name: 'TRICONO Ø 12 1/4 SGV615 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 2 },
-        { id: 'tri12_4', name: 'TRICONO Ø 12 1/4 SGV535 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
-        { id: 'tri12_5', name: 'TRICONO Ø 12 1/4 WLS65S BECO', brand: 'WLS - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
-        { id: 'tri12_6', name: 'TRICONO Ø 12 1/4 H735 BECO', brand: 'Shereate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'tri12_1', name: 'TRICONO Ø 12 1/4 SGA645 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 5 },
+        { id: 'tri12_2', name: 'TRICONO Ø 12 1/4 SGV715 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 3 },
+        { id: 'tri12_3', name: 'TRICONO Ø 12 1/4 SGV615 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 2 },
+        { id: 'tri12_4', name: 'TRICONO Ø 12 1/4 SGV535 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'tri12_5', name: 'TRICONO Ø 12 1/4 SG735 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
+        { id: 'tri12_6', name: 'TRICONO Ø 12 1/4 H735 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
     ]
 };
 

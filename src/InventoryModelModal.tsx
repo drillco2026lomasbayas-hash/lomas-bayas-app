@@ -132,7 +132,7 @@ export const InventoryModelModal: React.FC<InventoryModelModalProps> = ({
             <input
               type="text"
               required
-              placeholder="Ej: TRICONO Ø 10 5/8 WLS65S (S875) BECO"
+              placeholder="Ej: TRICONO Ø 10 5/8 SGA645GF Z01 BECO"
               value={name}
               onChange={(e) => setName(e.target.value)}
               style={{
@@ -151,7 +151,7 @@ export const InventoryModelModal: React.FC<InventoryModelModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="Ej: Shereate(Drillco) - Ø 10 5/8&quot; o WLS"
+              placeholder="Ej: Shareate(Drillco) - Ø 10 5/8&quot;"
               value={brand}
               onChange={(e) => setBrand(e.target.value)}
               style={{
