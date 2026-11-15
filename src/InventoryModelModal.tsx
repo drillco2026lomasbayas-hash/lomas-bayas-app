@@ -7,6 +7,7 @@ interface InventoryModelModalProps {
   onClose: () => void;
   itemKey: string;
   itemName: string;
+  itemSap?: string;
   modelToEdit: InventorySubModel | null;
   onSave: (itemKey: string, model: InventorySubModel) => void;
 }
@@ -16,12 +17,13 @@ export const InventoryModelModal: React.FC<InventoryModelModalProps> = ({
   onClose,
   itemKey,
   itemName,
+  itemSap,
   modelToEdit,
   onSave,
 }) => {
   const [name, setName] = useState('');
   const [brand, setBrand] = useState('');
-  const [sap, setSap] = useState('Del SAP');
+  const [sap, setSap] = useState('');
   const [mina, setMina] = useState(0);
   const [central, setCentral] = useState(0);
   const [sn, setSn] = useState('');
@@ -30,19 +32,19 @@ export const InventoryModelModal: React.FC<InventoryModelModalProps> = ({
     if (modelToEdit) {
       setName(modelToEdit.name || '');
       setBrand(modelToEdit.brand || '');
-      setSap(modelToEdit.sap || 'Del SAP');
+      setSap(modelToEdit.sap || itemSap || '');
       setMina(modelToEdit.mina || 0);
       setCentral(modelToEdit.central || 0);
       setSn(modelToEdit.sn || '');
     } else {
       setName('');
       setBrand('');
-      setSap('Del SAP');
+      setSap(itemSap || '');
       setMina(0);
       setCentral(0);
       setSn('');
     }
-  }, [modelToEdit, isOpen]);
+  }, [modelToEdit, isOpen, itemSap]);
 
   if (!isOpen) return null;
 
@@ -57,7 +59,7 @@ export const InventoryModelModal: React.FC<InventoryModelModalProps> = ({
       id: modelToEdit ? modelToEdit.id : `mod_${Date.now()}_${Math.random().toString(36).substr(2, 4)}`,
       name: name.trim(),
       brand: brand.trim(),
-      sap: sap.trim() || 'Del SAP',
+      sap: sap.trim() || itemSap || '',
       mina: Number(mina) || 0,
       central: Number(central) || 0,
       sn: sn.trim() || undefined,
@@ -166,11 +168,11 @@ export const InventoryModelModal: React.FC<InventoryModelModalProps> = ({
 
           <div>
             <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: '4px' }}>
-              Código SAP (opcional)
+              Código SAP {itemSap ? `(Heredado: ${itemSap})` : ''}
             </label>
             <input
               type="text"
-              placeholder="Ej: Del SAP o 33030719"
+              placeholder={itemSap ? `Ej: ${itemSap}` : 'Ej: 33030719'}
               value={sap}
               onChange={(e) => setSap(e.target.value)}
               style={{

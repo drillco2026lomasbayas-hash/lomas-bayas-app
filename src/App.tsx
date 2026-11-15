@@ -24,12 +24,13 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { db, type WellRecord, type ShiftReport, type SteelChange, type SteelMeasurement, type Event, type InventoryRecord, type SteelDiscard, type DrillStatusRecord } from './db';
-import { INVENTORY_CATEGORIES, createEmptyInventory, createInitialSubModels, type InventorySubModel } from './inventoryData';
+import { INVENTORY_CATEGORIES, createEmptyInventory, DEFAULT_MIN_STOCKS, type InventorySubModel } from './inventoryData';
 import './index.css';
 import DrillReportModal from './DrillReportModal';
 import { ChecklistPage } from './ChecklistPage';
 import { SyncStatusBar } from './SyncStatusBar';
 import { syncEngine } from './syncEngine';
+import { supabase } from './supabaseClient';
 import { useAuth } from './AuthContext';
 import { LoginView } from './LoginView';
 import { AdminPanel } from './AdminPanel';
@@ -490,30 +491,58 @@ const App: React.FC = () => {
   const [inventoryData, setInventoryData] = useState<Record<string, number>>(createEmptyInventory());
   const [subModelsData, setSubModelsData] = useState<Record<string, InventorySubModel[]>>(() => {
     try {
-      const cached = localStorage.getItem('lomasbayas_cached_inventory');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (parsed.subModels && Object.keys(parsed.subModels).length > 0) {
-          return parsed.subModels;
-        }
+      // Limpiar versiones anteriores de ejemplos hardcodeados si existen
+      if (!localStorage.getItem('lomasbayas_legacy_models_cleaned_v4')) {
+        localStorage.removeItem('lomasbayas_cached_inventory');
+        localStorage.removeItem('lomasbayas_inventory_submodels');
+        localStorage.removeItem('lomasbayas_configured_submodels');
+        localStorage.setItem('lomasbayas_legacy_models_cleaned_v4', 'true');
+        return {};
+      }
+      const saved = localStorage.getItem('lomasbayas_configured_submodels');
+      if (saved) {
+        return JSON.parse(saved);
       }
     } catch {
       // fallback
     }
-    return createInitialSubModels();
+    return {};
   });
-  const [collapsedModelGroups, setCollapsedModelGroups] = useState<Record<string, boolean>>({
-    tricono_12: true
+
+  const [minStocksData, setMinStocksData] = useState<Record<string, number>>(() => {
+    try {
+      const saved = localStorage.getItem('lomasbayas_inventory_min_stocks');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {}
+    return { ...DEFAULT_MIN_STOCKS };
   });
+
+  const [minStockModalData, setMinStockModalData] = useState<{
+    isOpen: boolean;
+    itemKey: string;
+    itemName: string;
+    currentMin: number;
+  }>({
+    isOpen: false,
+    itemKey: '',
+    itemName: '',
+    currentMin: 0
+  });
+
+  const [collapsedModelGroups, setCollapsedModelGroups] = useState<Record<string, boolean>>({});
   const [modelModalData, setModelModalData] = useState<{
     isOpen: boolean;
     itemKey: string;
     itemName: string;
+    itemSap?: string;
     model: InventorySubModel | null;
   }>({
     isOpen: false,
     itemKey: '',
     itemName: '',
+    itemSap: '',
     model: null
   });
   const [pdfPreviewModal, setPdfPreviewModal] = useState<{
@@ -1522,6 +1551,82 @@ const App: React.FC = () => {
     }
   };
 
+  // Persistencia de submodelos en LocalStorage, Dexie y Supabase
+  const persistSubModels = async (updated: Record<string, InventorySubModel[]>) => {
+    setSubModelsData(updated);
+    try {
+      localStorage.setItem('lomasbayas_configured_submodels', JSON.stringify(updated));
+      const cachedInv = localStorage.getItem('lomasbayas_cached_inventory');
+      if (cachedInv) {
+        const parsed = JSON.parse(cachedInv);
+        parsed.subModels = updated;
+        localStorage.setItem('lomasbayas_cached_inventory', JSON.stringify(parsed));
+      }
+      const lastLocal = await db.inventoryRecords.orderBy('id').last();
+      if (lastLocal && lastLocal.id) {
+        await db.inventoryRecords.update(lastLocal.id, { subModels: updated });
+      }
+      if (navigator.onLine) {
+        const { data } = await supabase
+          .from('inventory_records')
+          .select('id, stock_data')
+          .order('date', { ascending: false })
+          .limit(1);
+        if (data && data[0]) {
+          const updatedStock = {
+            ...(data[0].stock_data || {}),
+            subModels: updated,
+            minStocks: minStocksData
+          };
+          await supabase
+            .from('inventory_records')
+            .update({ stock_data: updatedStock })
+            .eq('id', data[0].id);
+        }
+      }
+    } catch (e) {
+      console.warn('Error al persistir submodelos:', e);
+    }
+  };
+
+  // Persistencia de stocks mínimos en LocalStorage, Dexie y Supabase
+  const persistMinStocks = async (updated: Record<string, number>) => {
+    setMinStocksData(updated);
+    try {
+      localStorage.setItem('lomasbayas_inventory_min_stocks', JSON.stringify(updated));
+      const cachedInv = localStorage.getItem('lomasbayas_cached_inventory');
+      if (cachedInv) {
+        const parsed = JSON.parse(cachedInv);
+        parsed.minStocks = updated;
+        localStorage.setItem('lomasbayas_cached_inventory', JSON.stringify(parsed));
+      }
+      const lastLocal = await db.inventoryRecords.orderBy('id').last();
+      if (lastLocal && lastLocal.id) {
+        await db.inventoryRecords.update(lastLocal.id, { minStocks: updated } as any);
+      }
+      if (navigator.onLine) {
+        const { data } = await supabase
+          .from('inventory_records')
+          .select('id, stock_data')
+          .order('date', { ascending: false })
+          .limit(1);
+        if (data && data[0]) {
+          const updatedStock = {
+            ...(data[0].stock_data || {}),
+            minStocks: updated,
+            subModels: subModelsData
+          };
+          await supabase
+            .from('inventory_records')
+            .update({ stock_data: updatedStock })
+            .eq('id', data[0].id);
+        }
+      }
+    } catch (e) {
+      console.warn('Error al persistir stocks mínimos:', e);
+    }
+  };
+
   // Manejadores para Modelos de Inventario
   const toggleCollapseModelGroup = (itemKey: string) => {
     setCollapsedModelGroups(prev => ({
@@ -1530,88 +1635,102 @@ const App: React.FC = () => {
     }));
   };
 
-  const handleUpdateSubModelStock = (itemKey: string, modelId: string, delta: number) => {
-    setSubModelsData(prev => {
-      const currentList = prev[itemKey] || [];
-      const updatedList = currentList.map(m => {
-        if (m.id === modelId) {
-          const newMina = Math.max(0, (m.mina || 0) + delta);
-          return { ...m, mina: newMina };
-        }
-        return m;
-      });
-
-      const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
-      setInventoryData(inv => ({
-        ...inv,
-        [`${itemKey}_mina`]: totalMina
-      }));
-
-      return {
-        ...prev,
-        [itemKey]: updatedList
-      };
+  const handleUpdateSubModelStock = async (itemKey: string, modelId: string, delta: number) => {
+    const currentList = subModelsData[itemKey] || [];
+    const updatedList = currentList.map(m => {
+      if (m.id === modelId) {
+        const newMina = Math.max(0, (m.mina || 0) + delta);
+        return { ...m, mina: newMina };
+      }
+      return m;
     });
+
+    const updatedAll = {
+      ...subModelsData,
+      [itemKey]: updatedList
+    };
+
+    await persistSubModels(updatedAll);
+
+    const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
+    setInventoryData(inv => ({
+      ...inv,
+      [`${itemKey}_mina`]: totalMina
+    }));
   };
 
-  const handleSaveSubModel = (itemKey: string, model: InventorySubModel) => {
-    setSubModelsData(prev => {
-      const currentList = prev[itemKey] || [];
-      const existsIndex = currentList.findIndex(m => m.id === model.id);
-      let updatedList: InventorySubModel[];
+  const handleSaveSubModel = async (itemKey: string, model: InventorySubModel) => {
+    const currentList = subModelsData[itemKey] || [];
+    const existsIndex = currentList.findIndex(m => m.id === model.id);
+    let updatedList: InventorySubModel[];
 
-      if (existsIndex >= 0) {
-        updatedList = [...currentList];
-        updatedList[existsIndex] = model;
-      } else {
-        updatedList = [...currentList, model];
-      }
+    if (existsIndex >= 0) {
+      updatedList = [...currentList];
+      updatedList[existsIndex] = model;
+    } else {
+      updatedList = [...currentList, model];
+    }
 
-      const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
-      const totalCentral = updatedList.reduce((sum, m) => sum + (m.central || 0), 0);
-      setInventoryData(inv => ({
-        ...inv,
-        [`${itemKey}_mina`]: totalMina,
-        [`${itemKey}_central`]: totalCentral
-      }));
+    const updatedAll = {
+      ...subModelsData,
+      [itemKey]: updatedList
+    };
 
-      return {
-        ...prev,
-        [itemKey]: updatedList
-      };
-    });
+    await persistSubModels(updatedAll);
+
+    // Recalcular totales mina y central para el item padre
+    const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
+    const totalCentral = updatedList.reduce((sum, m) => sum + (m.central || 0), 0);
+    setInventoryData(inv => ({
+      ...inv,
+      [`${itemKey}_mina`]: totalMina,
+      [`${itemKey}_central`]: totalCentral
+    }));
 
     setModelModalData({
       isOpen: false,
       itemKey: '',
       itemName: '',
+      itemSap: '',
       model: null
     });
   };
 
-  const handleDeleteSubModel = (itemKey: string, modelId: string) => {
+  const handleDeleteSubModel = async (itemKey: string, modelId: string) => {
     if (!confirm('¿Está seguro de eliminar este modelo del inventario?')) return;
-    setSubModelsData(prev => {
-      const currentList = prev[itemKey] || [];
-      const updatedList = currentList.filter(m => m.id !== modelId);
+    const currentList = subModelsData[itemKey] || [];
+    const updatedList = currentList.filter(m => m.id !== modelId);
 
-      const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
-      const totalCentral = updatedList.reduce((sum, m) => sum + (m.central || 0), 0);
-      setInventoryData(inv => ({
-        ...inv,
-        [`${itemKey}_mina`]: totalMina,
-        [`${itemKey}_central`]: totalCentral
-      }));
+    const updatedAll = {
+      ...subModelsData,
+      [itemKey]: updatedList
+    };
 
-      return {
-        ...prev,
-        [itemKey]: updatedList
-      };
-    });
+    await persistSubModels(updatedAll);
+
+    const totalMina = updatedList.reduce((sum, m) => sum + (m.mina || 0), 0);
+    const totalCentral = updatedList.reduce((sum, m) => sum + (m.central || 0), 0);
+    setInventoryData(inv => ({
+      ...inv,
+      [`${itemKey}_mina`]: totalMina,
+      [`${itemKey}_central`]: totalCentral
+    }));
   };
 
   // Cargar último registro de inventario (en modo offline usa datos guardados localmente)
   const loadLastInventory = async () => {
+    // 1. Cargar submodelos y stocks mínimos locales configurados
+    try {
+      const savedModels = localStorage.getItem('lomasbayas_configured_submodels');
+      if (savedModels) {
+        setSubModelsData(JSON.parse(savedModels));
+      }
+      const savedMins = localStorage.getItem('lomasbayas_inventory_min_stocks');
+      if (savedMins) {
+        setMinStocksData(JSON.parse(savedMins));
+      }
+    } catch {}
+
     if (!navigator.onLine) {
       console.log('Modo sin conexión: cargando inventario desde almacenamiento local...');
       try {
@@ -1629,8 +1748,11 @@ const App: React.FC = () => {
           });
           setInventoryData(newData);
           setInventoryObs(lastLocal.observations || {});
-          if (lastLocal.subModels && Object.keys(lastLocal.subModels).length > 0) {
+          if (lastLocal.subModels) {
             setSubModelsData(lastLocal.subModels);
+          }
+          if ((lastLocal as any).minStocks) {
+            setMinStocksData((lastLocal as any).minStocks);
           }
         } else {
           const cachedInv = localStorage.getItem('lomasbayas_cached_inventory');
@@ -1639,14 +1761,16 @@ const App: React.FC = () => {
             setLastInventoryDate(`${parsed.date || ''} (Caché local)`);
             setInventoryData(parsed.data || createEmptyInventory());
             setInventoryObs(parsed.observations || {});
-            if (parsed.subModels && Object.keys(parsed.subModels).length > 0) {
+            if (parsed.subModels) {
               setSubModelsData(parsed.subModels);
+            }
+            if (parsed.minStocks) {
+              setMinStocksData(parsed.minStocks);
             }
           } else {
             setLastInventoryDate('Sin conexión (Sin datos locales)');
             setInventoryData(createEmptyInventory());
             setInventoryObs({});
-            setSubModelsData(createInitialSubModels());
           }
         }
       } catch (err) {
@@ -1657,6 +1781,27 @@ const App: React.FC = () => {
     }
 
     try {
+      // Si estamos online, consultar también configuración remota desde Supabase
+      try {
+        const { data: supaInv } = await supabase
+          .from('inventory_records')
+          .select('stock_data')
+          .order('date', { ascending: false })
+          .limit(1);
+        if (supaInv && supaInv[0]?.stock_data) {
+          if (supaInv[0].stock_data.subModels) {
+            setSubModelsData(supaInv[0].stock_data.subModels);
+            localStorage.setItem('lomasbayas_configured_submodels', JSON.stringify(supaInv[0].stock_data.subModels));
+          }
+          if (supaInv[0].stock_data.minStocks) {
+            setMinStocksData(supaInv[0].stock_data.minStocks);
+            localStorage.setItem('lomasbayas_inventory_min_stocks', JSON.stringify(supaInv[0].stock_data.minStocks));
+          }
+        }
+      } catch (e) {
+        console.warn('Error cargando modelos desde Supabase:', e);
+      }
+
       const remoteInventory = await downloadLastInventoryFromSheet();
 
       if (remoteInventory) {
@@ -1668,7 +1813,6 @@ const App: React.FC = () => {
             const centralKey = `${item.key}_central` as keyof InventoryRecord;
             const minaKey = `${item.key}_mina` as keyof InventoryRecord;
 
-            // remoteInventory trae los campos desde Excel
             newData[`${item.key}_central`] = Number(remoteInventory[centralKey]) || 0;
             newData[`${item.key}_mina`] = Number(remoteInventory[minaKey]) || 0;
           });
@@ -1676,18 +1820,6 @@ const App: React.FC = () => {
 
         setInventoryData(newData);
         setInventoryObs(remoteInventory.observations || {});
-
-        // Cargar modelos remotos o mantener locales
-        if (remoteInventory.subModels && Object.keys(remoteInventory.subModels).length > 0) {
-          setSubModelsData(remoteInventory.subModels);
-        } else {
-          try {
-            const lastLocal = await db.inventoryRecords.orderBy('id').last();
-            if (lastLocal?.subModels && Object.keys(lastLocal.subModels).length > 0) {
-              setSubModelsData(lastLocal.subModels);
-            }
-          } catch {}
-        }
         setOpenSnRow(null);
 
         // Guardar copia local en caché para soporte offline
@@ -1696,16 +1828,14 @@ const App: React.FC = () => {
             date: remoteInventory.date,
             data: newData,
             observations: remoteInventory.observations || {},
-            subModels: subModelsData
+            subModels: subModelsData,
+            minStocks: minStocksData
           }));
-        } catch {
-          // ignore
-        }
+        } catch {}
       } else {
         setLastInventoryDate(null);
         setInventoryData(createEmptyInventory());
         setInventoryObs({});
-        setSubModelsData(createInitialSubModels());
         setOpenSnRow(null);
       }
     } catch (error) {
@@ -1714,9 +1844,6 @@ const App: React.FC = () => {
         const lastLocal = await db.inventoryRecords.orderBy('id').last();
         if (lastLocal) {
           setLastInventoryDate(`${lastLocal.date} (Local)`);
-          if (lastLocal.subModels && Object.keys(lastLocal.subModels).length > 0) {
-            setSubModelsData(lastLocal.subModels);
-          }
         } else {
           setLastInventoryDate('sin señal');
         }
@@ -1735,9 +1862,10 @@ const App: React.FC = () => {
         ...inventoryData,
         observations: inventoryObs,
         subModels: subModelsData,
+        minStocks: minStocksData,
         synced: 0,
         createdAt: Date.now()
-      } as Omit<InventoryRecord, 'id'>;
+      } as any;
 
       console.log('Guardando inventario...', record);
       await db.inventoryRecords.add(record);
@@ -1747,7 +1875,8 @@ const App: React.FC = () => {
           date: inventoryDate,
           data: inventoryData,
           observations: inventoryObs,
-          subModels: subModelsData
+          subModels: subModelsData,
+          minStocks: minStocksData
         }));
       } catch {}
 
@@ -1876,7 +2005,7 @@ const App: React.FC = () => {
 
             tableBody.push([
               { content: `   ↳ ${m.name}${m.brand ? ` (${m.brand})` : ''}`, styles: { textColor: [70, 70, 70], fontSize: 7.5 } },
-              { content: m.sap || 'Del SAP', styles: { halign: 'center', fontSize: 7.5, textColor: [100, 100, 100] } },
+              { content: item.sap, styles: { halign: 'center', fontSize: 7.5, textColor: [70, 70, 70] } },
               { content: mCentral.toString(), styles: { halign: 'center', fontSize: 7.5 } },
               { content: mMina.toString(), styles: { halign: 'center', fontSize: 7.5 } },
               { content: mTotal.toString(), styles: { halign: 'center', fontSize: 7.5, fontStyle: 'bold' } }
@@ -3734,7 +3863,17 @@ const App: React.FC = () => {
                     const models = subModelsData[item.key] || [];
                     const hasModels = models.length > 0;
                     const isCollapsed = !!collapsedModelGroups[item.key];
-                    const actualStock = (inventoryData[`${item.key}_mina`] || 0);
+                    const centralVal = (inventoryData[`${item.key}_central`] || 0);
+                    const minaVal = (inventoryData[`${item.key}_mina`] || 0);
+                    const actualStock = centralVal + minaVal;
+                    const itemMinStock = minStocksData[item.key] !== undefined ? minStocksData[item.key] : item.minStock;
+                    const hasMinStock = itemMinStock !== undefined && itemMinStock !== null;
+
+                    const subtitleText = [
+                      item.subtitle,
+                      `Central: ${centralVal} • Mina: ${minaVal}`,
+                      hasModels ? (isCollapsed ? `${models.length} modelos agrupados (clic para desagrupar)` : `Mostrando ${models.length} modelos (clic para agrupar)`) : null
+                    ].filter(Boolean).join(' • ');
 
                     if (hasModels) {
                       return (
@@ -3793,7 +3932,7 @@ const App: React.FC = () => {
                                   {item.name}
                                 </div>
                                 <div style={{ fontSize: '0.73rem', color: '#4b5563', marginTop: '1px' }}>
-                                  {item.subtitle || ''} {`• ${isCollapsed ? `${models.length} modelos agrupados (clic para desagrupar)` : `Mostrando ${models.length} modelos (clic para agrupar)`}`}
+                                  {subtitleText}
                                 </div>
                               </div>
                             </div>
@@ -3809,11 +3948,35 @@ const App: React.FC = () => {
                                 </div>
                               </div>
 
-                              {item.minStock !== undefined ? (
+                              {hasMinStock ? (
                                 <>
-                                  <div style={{ textAlign: 'center', minWidth: '50px' }}>
-                                    <div style={{ fontSize: '1.05rem', fontWeight: 700, color: '#4b5563', lineHeight: 1 }}>
-                                      {item.minStock}
+                                  <div style={{ textAlign: 'center', minWidth: '55px' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '3px' }}>
+                                      <span style={{ fontSize: '1.05rem', fontWeight: 700, color: '#4b5563', lineHeight: 1 }}>
+                                        {itemMinStock}
+                                      </span>
+                                      {profile?.role === 'admin' && (
+                                        <button
+                                          onClick={() => setMinStockModalData({
+                                            isOpen: true,
+                                            itemKey: item.key,
+                                            itemName: item.name,
+                                            currentMin: itemMinStock
+                                          })}
+                                          style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            padding: '2px',
+                                            color: '#f59e0b',
+                                            cursor: 'pointer',
+                                            display: 'flex',
+                                            alignItems: 'center'
+                                          }}
+                                          title="Editar stock mínimo crítico (Admin)"
+                                        >
+                                          <Pencil size={11} />
+                                        </button>
+                                      )}
                                     </div>
                                     <div style={{ fontSize: '0.62rem', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px' }}>
                                       MÍNIMO
@@ -3821,7 +3984,7 @@ const App: React.FC = () => {
                                   </div>
 
                                   {(() => {
-                                    const diff = actualStock - item.minStock;
+                                    const diff = actualStock - itemMinStock;
                                     const isPos = diff >= 0;
                                     return (
                                       <div style={{
@@ -3845,7 +4008,33 @@ const App: React.FC = () => {
                                   })()}
                                 </>
                               ) : (
-                                <div style={{ minWidth: '100px' }} />
+                                profile?.role === 'admin' ? (
+                                  <div style={{ textAlign: 'center', minWidth: '70px' }}>
+                                    <button
+                                      onClick={() => setMinStockModalData({
+                                        isOpen: true,
+                                        itemKey: item.key,
+                                        itemName: item.name,
+                                        currentMin: 0
+                                      })}
+                                      style={{
+                                        background: 'none',
+                                        border: '1px dashed #cbd5e1',
+                                        borderRadius: '4px',
+                                        padding: '3px 6px',
+                                        fontSize: '0.68rem',
+                                        color: '#64748b',
+                                        cursor: 'pointer',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                      title="Configurar stock mínimo crítico (Admin)"
+                                    >
+                                      + Mínimo
+                                    </button>
+                                  </div>
+                                ) : (
+                                  <div style={{ minWidth: '70px' }} />
+                                )
                               )}
 
                               <button
@@ -3870,6 +4059,7 @@ const App: React.FC = () => {
                                   isOpen: true,
                                   itemKey: item.key,
                                   itemName: item.name,
+                                  itemSap: item.sap,
                                   model: null
                                 })}
                                 style={{
@@ -3928,19 +4118,25 @@ const App: React.FC = () => {
                                 </div>
                               </div>
 
-                              {/* Centro y Derecha: Cantidad, Del SAP, Acciones */}
+                              {/* Centro y Derecha: Cantidades Central/Mina, N° SAP (del madre), Acciones */}
                               <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
-                                <div style={{ textAlign: 'center', minWidth: '45px' }}>
-                                  <div style={{ fontSize: '1rem', fontWeight: 800, color: '#111827', lineHeight: 1 }}>
-                                    {model.mina}
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <div style={{ textAlign: 'center', minWidth: '42px' }}>
+                                    <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#1e293b', lineHeight: 1 }}>
+                                      {model.central || 0}
+                                    </div>
+                                    <div style={{ fontSize: '0.58rem', fontWeight: 700, color: '#64748b' }}>
+                                      CENTRAL
+                                    </div>
                                   </div>
-                                  <div style={{ fontSize: '0.62rem', fontWeight: 700, color: '#9ca3af', letterSpacing: '0.5px' }}>
-                                    UNID.
+                                  <div style={{ textAlign: 'center', minWidth: '42px' }}>
+                                    <div style={{ fontSize: '1rem', fontWeight: 800, color: '#047857', lineHeight: 1 }}>
+                                      {model.mina || 0}
+                                    </div>
+                                    <div style={{ fontSize: '0.58rem', fontWeight: 700, color: '#047857' }}>
+                                      MINA
+                                    </div>
                                   </div>
-                                </div>
-
-                                <div style={{ color: '#d1d5db', fontSize: '1rem', width: '45px', textAlign: 'center' }}>
-                                  —
                                 </div>
 
                                 <span style={{
@@ -3952,8 +4148,9 @@ const App: React.FC = () => {
                                   fontSize: '0.72rem',
                                   fontWeight: 700,
                                   whiteSpace: 'nowrap'
-                                }}>
-                                  {model.sap || 'Del SAP'}
+                                }}
+                                title={`SAP de ${item.name}`}>
+                                  {item.sap}
                                 </span>
 
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -3973,7 +4170,7 @@ const App: React.FC = () => {
                                       cursor: 'pointer',
                                       whiteSpace: 'nowrap'
                                     }}
-                                    title="Ingreso (+1)"
+                                    title="Ingreso Mina (+1)"
                                   >
                                     <ArrowUp size={13} /> Ingreso
                                   </button>
@@ -3994,7 +4191,7 @@ const App: React.FC = () => {
                                       cursor: 'pointer',
                                       whiteSpace: 'nowrap'
                                     }}
-                                    title="Retiro (-1)"
+                                    title="Retiro Mina (-1)"
                                   >
                                     <ArrowDown size={13} /> Retiro
                                   </button>
@@ -4004,6 +4201,7 @@ const App: React.FC = () => {
                                       isOpen: true,
                                       itemKey: item.key,
                                       itemName: item.name,
+                                      itemSap: item.sap,
                                       model
                                     })}
                                     style={{
@@ -4081,10 +4279,15 @@ const App: React.FC = () => {
                               }}>
                                 {item.name}
                               </div>
+                              {item.subtitle && (
+                                <div style={{ fontSize: '0.7rem', color: '#64748b' }}>
+                                  {item.subtitle}
+                                </div>
+                              )}
                             </div>
                           </div>
 
-                          {/* Controles Bodega Central y Bodega Mina */}
+                          {/* Controles Bodega Central, Bodega Mina, Mínimo y Botones */}
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
                             {/* Bodega Central */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -4196,6 +4399,79 @@ const App: React.FC = () => {
                               >+</button>
                             </div>
 
+                            {/* Indicador de Mínimo si existe para producto normal */}
+                            {hasMinStock ? (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <div style={{ textAlign: 'center', minWidth: '40px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '2px' }}>
+                                    <span style={{ fontSize: '0.9rem', fontWeight: 700, color: '#4b5563' }}>
+                                      {itemMinStock}
+                                    </span>
+                                    {profile?.role === 'admin' && (
+                                      <button
+                                        onClick={() => setMinStockModalData({
+                                          isOpen: true,
+                                          itemKey: item.key,
+                                          itemName: item.name,
+                                          currentMin: itemMinStock
+                                        })}
+                                        style={{ background: 'none', border: 'none', padding: 0, color: '#f59e0b', cursor: 'pointer' }}
+                                        title="Editar mínimo crítico (Admin)"
+                                      >
+                                        <Pencil size={10} />
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div style={{ fontSize: '0.55rem', fontWeight: 700, color: '#6b7280' }}>
+                                    MÍN
+                                  </div>
+                                </div>
+
+                                {(() => {
+                                  const diff = actualStock - itemMinStock;
+                                  const isPos = diff >= 0;
+                                  return (
+                                    <div style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '2px',
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      fontSize: '0.72rem',
+                                      fontWeight: 800,
+                                      background: isPos ? '#d1fae5' : '#fee2e2',
+                                      color: isPos ? '#065f46' : '#991b1b',
+                                      border: `1px solid ${isPos ? '#a7f3d0' : '#fecaca'}`
+                                    }}>
+                                      {isPos ? <CheckCircle size={11} /> : <AlertTriangle size={11} />}
+                                      {diff > 0 ? `+${diff}` : diff}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            ) : profile?.role === 'admin' ? (
+                              <button
+                                onClick={() => setMinStockModalData({
+                                  isOpen: true,
+                                  itemKey: item.key,
+                                  itemName: item.name,
+                                  currentMin: 0
+                                })}
+                                style={{
+                                  background: 'none',
+                                  border: '1px dashed #cbd5e1',
+                                  borderRadius: '4px',
+                                  padding: '2px 5px',
+                                  fontSize: '0.65rem',
+                                  color: '#64748b',
+                                  cursor: 'pointer'
+                                }}
+                                title="Configurar stock mínimo crítico (Admin)"
+                              >
+                                + Mín
+                              </button>
+                            ) : null}
+
                             {/* Botón SN */}
                             <button
                               onClick={() => setOpenSnRow(openSnRow === item.key ? null : item.key)}
@@ -4222,6 +4498,7 @@ const App: React.FC = () => {
                                 isOpen: true,
                                 itemKey: item.key,
                                 itemName: item.name,
+                                itemSap: item.sap,
                                 model: null
                               })}
                               style={{
@@ -5014,12 +5291,116 @@ const App: React.FC = () => {
       {/* Modal Agregar / Editar Modelo de Producto */}
       <InventoryModelModal
         isOpen={modelModalData.isOpen}
-        onClose={() => setModelModalData({ isOpen: false, itemKey: '', itemName: '', model: null })}
+        onClose={() => setModelModalData({ isOpen: false, itemKey: '', itemName: '', itemSap: '', model: null })}
         itemKey={modelModalData.itemKey}
         itemName={modelModalData.itemName}
+        itemSap={modelModalData.itemSap}
         modelToEdit={modelModalData.model}
         onSave={handleSaveSubModel}
       />
+
+      {/* Modal Configurar / Editar Stock Mínimo Crítico (Solo Admin) */}
+      {minStockModalData.isOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: '100vw',
+          height: '100vh',
+          backgroundColor: 'rgba(15, 23, 42, 0.7)',
+          backdropFilter: 'blur(3px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 99999,
+          padding: '1rem',
+          boxSizing: 'border-box'
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '12px',
+            width: '100%',
+            maxWidth: '380px',
+            padding: '1.25rem',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)'
+          }}>
+            <h3 style={{ margin: '0 0 0.4rem 0', fontSize: '1rem', color: '#0f172a' }}>
+              Configurar Stock Mínimo Crítico
+            </h3>
+            <p style={{ margin: '0 0 1rem 0', fontSize: '0.8rem', color: '#64748b' }}>
+              {minStockModalData.itemName}
+            </p>
+
+            <div style={{ marginBottom: '1.25rem' }}>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#334155', marginBottom: '6px' }}>
+                Cantidad Mínima Requerida
+              </label>
+              <input
+                type="number"
+                min="0"
+                value={minStockModalData.currentMin}
+                onChange={(e) => setMinStockModalData({
+                  ...minStockModalData,
+                  currentMin: Math.max(0, parseInt(e.target.value) || 0)
+                })}
+                style={{
+                  width: '100%',
+                  padding: '0.6rem',
+                  border: '1.5px solid #cbd5e1',
+                  borderRadius: '6px',
+                  fontSize: '1.1rem',
+                  fontWeight: 'bold',
+                  textAlign: 'center'
+                }}
+                autoFocus
+              />
+              <span style={{ fontSize: '0.72rem', color: '#64748b', marginTop: '5px', display: 'block' }}>
+                Si el stock total es inferior a este valor, se activará la alerta crítica de déficit.
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setMinStockModalData({ isOpen: false, itemKey: '', itemName: '', currentMin: 0 })}
+                style={{
+                  padding: '0.5rem 1rem',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  background: 'white',
+                  color: '#475569',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={async () => {
+                  const updated = {
+                    ...minStocksData,
+                    [minStockModalData.itemKey]: minStockModalData.currentMin
+                  };
+                  await persistMinStocks(updated);
+                  setMinStockModalData({ isOpen: false, itemKey: '', itemName: '', currentMin: 0 });
+                }}
+                style={{
+                  padding: '0.5rem 1.25rem',
+                  border: 'none',
+                  borderRadius: '6px',
+                  background: '#f59e0b',
+                  color: 'white',
+                  fontSize: '0.85rem',
+                  fontWeight: 700,
+                  cursor: 'pointer'
+                }}
+              >
+                Guardar Mínimo
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

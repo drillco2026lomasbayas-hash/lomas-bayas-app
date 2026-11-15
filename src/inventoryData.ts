@@ -25,23 +25,13 @@ export interface InventoryCategory {
     items: InventoryItem[];
 }
 
-// Modelos por defecto para Triconos según faena Lomas Bayas
-export const DEFAULT_SUB_MODELS: Record<string, InventorySubModel[]> = {
-    tricono_10: [
-        { id: 'sga645', name: 'TRICONO Ø 10 5/8 SGA645GF Z01 BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 10 },
-        { id: 'sgv715', name: 'TRICONO Ø 10 5/8 SGV715RF BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 2 },
-        { id: 'sgv615', name: 'TRICONO Ø 10 5/8 SGV615RF BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
-        { id: 'sgv535', name: 'TRICONO Ø 10 5/8 SGV535R BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
-        { id: 'sg735', name: 'TRICONO Ø 10 5/8 SG735 BECO', brand: 'Shareate(Drillco) - Ø 10 5/8"', sap: 'Del SAP', central: 0, mina: 1 },
-    ],
-    tricono_12: [
-        { id: 'tri12_1', name: 'TRICONO Ø 12 1/4 SGA645 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 5 },
-        { id: 'tri12_2', name: 'TRICONO Ø 12 1/4 SGV715 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 3 },
-        { id: 'tri12_3', name: 'TRICONO Ø 12 1/4 SGV615 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 2 },
-        { id: 'tri12_4', name: 'TRICONO Ø 12 1/4 SGV535 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
-        { id: 'tri12_5', name: 'TRICONO Ø 12 1/4 SG735 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
-        { id: 'tri12_6', name: 'TRICONO Ø 12 1/4 H735 BECO', brand: 'Shareate(Drillco) - Ø 12 1/4"', sap: 'Del SAP', central: 0, mina: 1 },
-    ]
+// Modelos por defecto para Triconos (vacío inicialmente; administrado por el usuario)
+export const DEFAULT_SUB_MODELS: Record<string, InventorySubModel[]> = {};
+
+// Stock mínimo crítico por defecto para los items principales
+export const DEFAULT_MIN_STOCKS: Record<string, number> = {
+    tricono_10: 10,
+    tricono_12: 26
 };
 
 export const INVENTORY_CATEGORIES: InventoryCategory[] = [
@@ -52,17 +42,15 @@ export const INVENTORY_CATEGORIES: InventoryCategory[] = [
                 key: 'tricono_10',
                 name: 'TRICONO DRILLCO 10-5/8" PIN BECO 6',
                 sap: '33030719',
-                subtitle: 'Ø 10 5/8" • Bodega Mina (Curva 4)',
-                minStock: 10,
-                defaultModels: DEFAULT_SUB_MODELS.tricono_10
+                subtitle: 'Ø 10 5/8"',
+                minStock: 10
             },
             {
                 key: 'tricono_12',
                 name: 'TRICONO DRILLCO 12-1/4" PIN BECO 6',
                 sap: '33030718',
-                subtitle: 'Ø 12 1/4" • Bodega Mina (Curva 4)',
-                minStock: 26,
-                defaultModels: DEFAULT_SUB_MODELS.tricono_12
+                subtitle: 'Ø 12 1/4"',
+                minStock: 26
             },
         ]
     },
@@ -118,34 +106,19 @@ export const INVENTORY_CATEGORIES: InventoryCategory[] = [
     }
 ];
 
-// Crear objeto inicial de inventario con todos los valores en 0 (considerando modelos si existen)
+// Crear objeto inicial de inventario con todos los valores en 0
 export function createEmptyInventory(): Record<string, number> {
     const inventory: Record<string, number> = {};
     INVENTORY_CATEGORIES.forEach(cat => {
         cat.items.forEach(item => {
-            if (item.defaultModels && item.defaultModels.length > 0) {
-                const totalCentral = item.defaultModels.reduce((s, m) => s + (m.central || 0), 0);
-                const totalMina = item.defaultModels.reduce((s, m) => s + (m.mina || 0), 0);
-                inventory[`${item.key}_central`] = totalCentral;
-                inventory[`${item.key}_mina`] = totalMina;
-            } else {
-                inventory[`${item.key}_central`] = 0;
-                inventory[`${item.key}_mina`] = 0;
-            }
+            inventory[`${item.key}_central`] = 0;
+            inventory[`${item.key}_mina`] = 0;
         });
     });
     return inventory;
 }
 
-// Crear modelos iniciales por defecto
+// Crear modelos iniciales (vacío por defecto, administrado por el usuario)
 export function createInitialSubModels(): Record<string, InventorySubModel[]> {
-    const models: Record<string, InventorySubModel[]> = {};
-    INVENTORY_CATEGORIES.forEach(cat => {
-        cat.items.forEach(item => {
-            if (item.defaultModels) {
-                models[item.key] = JSON.parse(JSON.stringify(item.defaultModels));
-            }
-        });
-    });
-    return models;
+    return {};
 }
