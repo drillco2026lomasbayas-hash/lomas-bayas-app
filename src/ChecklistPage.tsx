@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Save, CheckCircle2, ClipboardCheck, List, FileText, RefreshCw } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Save, CheckCircle2, ClipboardCheck, List, FileText, RefreshCw, Camera, Image as ImageIcon, X } from 'lucide-react';
 import { db } from './db';
-import { loadImageForPDF } from './App';
+import { loadImageForPDF, compressImage } from './App';
 import { formatDateSafe } from './utils/dateUtils';
+import { syncEngine } from './syncEngine';
 
 const ROTARY_DRILLS = ['5', '6', '7', '9', '10', '12', '13'];
 const DTH_DRILLS = ['8', '11', '14'];
@@ -89,6 +90,14 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
   // items state stores: { "Item Name": { status: 'Bueno'|'Regular'|'Malo'|'NA', obs: '' } }
   const [items, setItems] = useState<Record<string, { status: string; obs: string }>>({});
 
+  // Fotos adjuntas al checklist
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [processingPhotos, setProcessingPhotos] = useState(false);
+  const [previewPhoto, setPreviewPhoto] = useState<string | null>(null);
+
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState(false);
 
@@ -146,6 +155,15 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
       loadHistory();
     }
   }, [activeTab]);
+
+  const getImageNaturalDimensions = (src: string): Promise<{ width: number; height: number }> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth || 800, height: img.naturalHeight || 600 });
+      img.onerror = () => resolve({ width: 800, height: 600 });
+      img.src = src;
+    });
+  };
 
   const generatePDF = async (record: any) => {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
@@ -224,6 +242,111 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
       }
     });
 
+    // Registro Fotográfico de Inspección
+    const photos: string[] = Array.isArray(record.photos) && record.photos.length > 0
+      ? record.photos
+      : (record.items?._photos && Array.isArray(record.items._photos) ? record.items._photos : []);
+
+    if (photos.length > 0) {
+      // Iniciar en página separada para orden y presentación ejecutiva
+      doc.addPage();
+
+      if (logoLeft) doc.addImage(logoLeft.data, 'JPEG', 15, 10, 40, 15);
+      if (logoRight) doc.addImage(logoRight.data, 'PNG', 165, 10, 30, 15);
+
+      doc.setFontSize(14);
+      doc.setTextColor(11, 43, 69);
+      doc.text("REGISTRO FOTOGRÁFICO DE INSPECCIÓN", 105, 20, { align: 'center' });
+
+      doc.setFontSize(9);
+      doc.setTextColor(100, 116, 139);
+      doc.text(`Perforadora PE-${record.perforadora} • Fecha: ${formatDateSafe(record.date)} • Operador: ${record.operador}`, 105, 26, { align: 'center' });
+
+      let currentY = 33;
+      const marginX = 15;
+      const colWidth = 85;
+      const colGap = 10;
+      const imgBoxHeight = 56;
+      const cardHeight = imgBoxHeight + 8; // Altura total de la tarjeta con pie de foto
+
+      for (let i = 0; i < photos.length; i++) {
+        const colIndex = i % 2;
+        const posX = marginX + colIndex * (colWidth + colGap);
+
+        // Salto de página si la fila excede el límite imprimible (A4: 297mm)
+        if (currentY + cardHeight > 272) {
+          doc.addPage();
+          if (logoLeft) doc.addImage(logoLeft.data, 'JPEG', 15, 10, 40, 15);
+          if (logoRight) doc.addImage(logoRight.data, 'PNG', 165, 10, 30, 15);
+
+          doc.setFontSize(12);
+          doc.setTextColor(11, 43, 69);
+          doc.text(`REGISTRO FOTOGRÁFICO (Cont.) - PE-${record.perforadora}`, 105, 20, { align: 'center' });
+          currentY = 32;
+        }
+
+        const photoSrc = photos[i];
+        try {
+          // Marco de tarjeta
+          doc.setFillColor(248, 250, 252);
+          doc.setDrawColor(203, 213, 225);
+          doc.setLineWidth(0.3);
+          doc.roundedRect(posX, currentY, colWidth, cardHeight, 2, 2, 'FD');
+
+          // Dimensiones naturales para encaje proporcional sin distorsión
+          const dims = await getImageNaturalDimensions(photoSrc);
+          const boxW = colWidth - 4;
+          const boxH = imgBoxHeight;
+          const imgRatio = dims.width / dims.height;
+          const boxRatio = boxW / boxH;
+
+          let drawW = boxW;
+          let drawH = boxH;
+          let offX = 0;
+          let offY = 0;
+
+          if (imgRatio > boxRatio) {
+            drawW = boxW;
+            drawH = boxW / imgRatio;
+            offY = (boxH - drawH) / 2;
+          } else {
+            drawH = boxH;
+            drawW = boxH * imgRatio;
+            offX = (boxW - drawW) / 2;
+          }
+
+          doc.addImage(photoSrc, 'JPEG', posX + 2 + offX, currentY + 2 + offY, drawW, drawH, undefined, 'FAST');
+
+          // Pie de foto centrado
+          doc.setFontSize(8);
+          doc.setTextColor(51, 65, 85);
+          doc.text(`Foto #${i + 1} - Evidencia Inspección PE-${record.perforadora}`, posX + colWidth / 2, currentY + cardHeight - 2.5, { align: 'center' });
+        } catch (imgErr) {
+          console.warn(`Error al renderizar foto ${i + 1} en PDF:`, imgErr);
+          doc.setFillColor(241, 245, 249);
+          doc.rect(posX, currentY, colWidth, cardHeight, 'F');
+          doc.setFontSize(8);
+          doc.setTextColor(148, 163, 184);
+          doc.text(`Foto #${i + 1} (No disponible)`, posX + colWidth / 2, currentY + cardHeight / 2, { align: 'center' });
+        }
+
+        // Si completamos la columna derecha o es la última foto impar, avanzar fila
+        if (colIndex === 1 || i === photos.length - 1) {
+          currentY += cardHeight + 6;
+        }
+      }
+    }
+
+    // Pie de página en todas las páginas
+    const totalPages = (doc as any).internal.getNumberOfPages();
+    for (let p = 1; p <= totalPages; p++) {
+      doc.setPage(p);
+      doc.setFontSize(8);
+      doc.setTextColor(148, 163, 184);
+      doc.text(`Página ${p} de ${totalPages}`, 195, 290, { align: 'right' });
+      doc.text("Drillco Mining Technologies • Checklist de Equipos Lomas Bayas", 15, 290);
+    }
+
     doc.save(`Checklist_PE${record.perforadora}_${record.date}.pdf`);
   };
 
@@ -245,6 +368,35 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
       ...prev,
       [item]: { ...prev[item], status: prev[item]?.status || 'Bueno', obs }
     }));
+  };
+
+  const handlePhotoInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setProcessingPhotos(true);
+    try {
+      const newPhotos: string[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        try {
+          const compressed = await compressImage(file);
+          if (compressed) {
+            newPhotos.push(compressed);
+          }
+        } catch (err) {
+          console.warn('Error procesando foto de checklist:', err);
+        }
+      }
+      setPhotos(prev => [...prev, ...newPhotos]);
+    } finally {
+      setProcessingPhotos(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemovePhoto = (index: number) => {
+    setPhotos(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSave = async () => {
@@ -276,6 +428,7 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
         cantidadAceros,
         obsAceros,
         items: formattedItems,
+        photos,
         synced: 0,
         createdAt: Date.now()
       };
@@ -296,6 +449,10 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
       newRecord.synced = syncSuccess ? 1 : 0;
       await db.checklists.add(newRecord);
 
+      if (isOnline) {
+        syncEngine.syncAll().catch(err => console.warn('Error sincronizando checklist con Supabase:', err));
+      }
+
       if (onSave) {
         onSave();
       }
@@ -308,6 +465,7 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
       setOperador('');
       setObsAceros('');
       setItems({});
+      setPhotos([]);
     } catch (error) {
       console.error('Error al guardar checklist:', error);
       alert('Error al guardar el checklist localmente.');
@@ -516,6 +674,232 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
             </>
           )}
 
+          {/* Sección de Fotografías / Evidencias de Inspección */}
+          <div style={{
+            background: '#ffffff',
+            borderRadius: '10px',
+            border: '1px solid #cbd5e1',
+            padding: '1.25rem',
+            marginTop: '1.5rem',
+            marginBottom: '1rem',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.03)'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.85rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <div style={{
+                  background: '#e0f2fe',
+                  color: '#0284c7',
+                  borderRadius: '8px',
+                  width: '36px',
+                  height: '36px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  flexShrink: 0
+                }}>
+                  <Camera size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 800, color: '#0f172a' }}>
+                    Fotografías / Evidencias del Equipo
+                  </h3>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                    Captura o sube imágenes de condiciones, componentes o fallas detectadas
+                  </span>
+                </div>
+              </div>
+              <span style={{
+                fontSize: '0.74rem',
+                fontWeight: 700,
+                background: photos.length > 0 ? '#dcfce7' : '#f1f5f9',
+                color: photos.length > 0 ? '#15803d' : '#64748b',
+                padding: '0.25rem 0.65rem',
+                borderRadius: '9999px',
+                border: photos.length > 0 ? '1px solid #bbf7d0' : '1px solid #e2e8f0'
+              }}>
+                {photos.length} {photos.length === 1 ? 'fotografía' : 'fotografías'}
+              </span>
+            </div>
+
+            {/* Inputs de archivo ocultos (Cámara nativa y Galería múltiple) */}
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              ref={cameraInputRef}
+              style={{ display: 'none' }}
+              onChange={handlePhotoInputChange}
+            />
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              ref={galleryInputRef}
+              style={{ display: 'none' }}
+              onChange={handlePhotoInputChange}
+            />
+
+            {/* Botones de acción Cámara y Galería */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem', marginBottom: '1rem' }}>
+              <button
+                type="button"
+                onClick={() => cameraInputRef.current?.click()}
+                disabled={processingPhotos}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.5rem',
+                  padding: '0.75rem 1rem',
+                  borderRadius: '8px',
+                  border: '1.5px solid #0284c7',
+                  background: '#f0f9ff',
+                  color: '#0284c7',
+                  fontWeight: 700,
+                  fontSize: '0.88rem',
+                  cursor: processingPhotos ? 'wait' : 'pointer',
+                  boxShadow: '0 1px 2px rgba(2, 132, 199, 0.1)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <Camera size={18} />
+                <span>Tomar Foto (Cámara)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => galleryInputRef.current?.click()}
+                disabled={processingPhotos}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '0.5rem',
+                  padding: '0.75rem 1rem',
+                  borderRadius: '8px',
+                  border: '1.5px solid #64748b',
+                  background: '#f8fafc',
+                  color: '#334155',
+                  fontWeight: 700,
+                  fontSize: '0.88rem',
+                  cursor: processingPhotos ? 'wait' : 'pointer',
+                  boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <ImageIcon size={18} />
+                <span>Subir de Galería</span>
+              </button>
+            </div>
+
+            {/* Indicador de procesamiento y optimización */}
+            {processingPhotos && (
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                padding: '0.65rem 0.9rem',
+                background: '#eff6ff',
+                color: '#1d4ed8',
+                borderRadius: '6px',
+                fontSize: '0.82rem',
+                marginBottom: '1rem',
+                border: '1px solid #bfdbfe'
+              }}>
+                <RefreshCw size={15} className="spin" style={{ animation: 'spin 1s linear infinite' }} />
+                <span>Comprimiendo y optimizando fotografía(s)...</span>
+              </div>
+            )}
+
+            {/* Cuadrícula de fotos adjuntas */}
+            {photos.length > 0 ? (
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))',
+                gap: '0.75rem',
+                marginTop: '0.5rem'
+              }}>
+                {photos.map((photo, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      position: 'relative',
+                      borderRadius: '8px',
+                      overflow: 'hidden',
+                      border: '1px solid #cbd5e1',
+                      background: '#0f172a',
+                      aspectRatio: '4/3',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 2px 4px rgba(0,0,0,0.06)'
+                    }}
+                  >
+                    <img
+                      src={photo}
+                      alt={`Evidencia ${idx + 1}`}
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', cursor: 'pointer' }}
+                      onClick={() => setPreviewPhoto(photo)}
+                      title="Clic para ampliar"
+                    />
+                    <span style={{
+                      position: 'absolute',
+                      bottom: '5px',
+                      left: '5px',
+                      background: 'rgba(15, 23, 42, 0.78)',
+                      backdropFilter: 'blur(2px)',
+                      color: '#ffffff',
+                      fontSize: '0.7rem',
+                      fontWeight: 700,
+                      padding: '2px 6px',
+                      borderRadius: '4px'
+                    }}>
+                      Foto #{idx + 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleRemovePhoto(idx);
+                      }}
+                      title="Eliminar foto"
+                      style={{
+                        position: 'absolute',
+                        top: '5px',
+                        right: '5px',
+                        background: '#dc2626',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '50%',
+                        width: '24px',
+                        height: '24px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        cursor: 'pointer',
+                        boxShadow: '0 2px 5px rgba(0,0,0,0.35)'
+                      }}
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{
+                padding: '1.25rem',
+                textAlign: 'center',
+                background: '#f8fafc',
+                borderRadius: '8px',
+                border: '1px dashed #cbd5e1',
+                color: '#94a3b8',
+                fontSize: '0.82rem'
+              }}>
+                📷 No hay fotografías adjuntas. Puedes capturar componentes críticos, desgaste o evidencias desde la cámara o galería.
+              </div>
+            )}
+          </div>
+
           {/* Botón Guardar */}
           <button
             onClick={handleSave}
@@ -573,37 +957,148 @@ export const ChecklistPage: React.FC<ChecklistPageProps> = ({ onSave, gasUrl, is
                     <th>Perforadora</th>
                     <th>Operador</th>
                     <th>Horómetro</th>
+                    <th>Fotos</th>
                     <th>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {history
                     .filter(h => filterDrill === 'ALL' || h.perforadora == filterDrill)
-                    .map((item, i) => (
-                      <tr key={i}>
-                        <td>{formatDateSafe(item.date)}</td>
-                        <td>{item.type}</td>
-                        <td>PE-{item.perforadora}</td>
-                        <td>{item.operador}</td>
-                        <td>{item.horometro}</td>
-                        <td>
-                          <button
-                            onClick={() => generatePDF(item)}
-                            style={{
-                              background: '#0b2b45', color: 'white', border: 'none', padding: '0.4rem 0.8rem',
-                              borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem'
-                            }}
-                          >
-                            <FileText size={16} />
-                            PDF
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    .map((item, i) => {
+                      const photoCount = Array.isArray(item.photos)
+                        ? item.photos.length
+                        : (item.items?._photos && Array.isArray(item.items._photos) ? item.items._photos.length : 0);
+
+                      return (
+                        <tr key={i}>
+                          <td>{formatDateSafe(item.date)}</td>
+                          <td>{item.type}</td>
+                          <td>PE-{item.perforadora}</td>
+                          <td>{item.operador}</td>
+                          <td>{item.horometro}</td>
+                          <td>
+                            {photoCount > 0 ? (
+                              <span style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                background: '#e0f2fe',
+                                color: '#0369a1',
+                                padding: '2px 7px',
+                                borderRadius: '9999px',
+                                fontSize: '0.75rem',
+                                fontWeight: 700
+                              }}>
+                                <Camera size={12} />
+                                {photoCount}
+                              </span>
+                            ) : (
+                              <span style={{ color: '#94a3b8', fontSize: '0.75rem' }}>—</span>
+                            )}
+                          </td>
+                          <td>
+                            <button
+                              onClick={() => generatePDF(item)}
+                              style={{
+                                background: '#0b2b45', color: 'white', border: 'none', padding: '0.4rem 0.8rem',
+                                borderRadius: '4px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem'
+                              }}
+                            >
+                              <FileText size={16} />
+                              PDF
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal de previsualización ampliada de fotografía */}
+      {previewPhoto && (
+        <div
+          onClick={() => setPreviewPhoto(null)}
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(15, 23, 42, 0.88)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 99999,
+            padding: '1rem',
+            boxSizing: 'border-box'
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              position: 'relative',
+              maxWidth: '92vw',
+              maxHeight: '90vh',
+              background: '#0f172a',
+              borderRadius: '12px',
+              overflow: 'hidden',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+              display: 'flex',
+              flexDirection: 'column'
+            }}
+          >
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              padding: '0.75rem 1rem',
+              background: '#1e293b',
+              color: '#f8fafc'
+            }}>
+              <span style={{ fontSize: '0.88rem', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Camera size={16} color="#38bdf8" />
+                Fotografía de Inspección
+              </span>
+              <button
+                onClick={() => setPreviewPhoto(null)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#94a3b8',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  padding: '4px'
+                }}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div style={{
+              padding: '0.5rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              overflow: 'auto',
+              maxHeight: 'calc(90vh - 60px)'
+            }}>
+              <img
+                src={previewPhoto}
+                alt="Vista previa completa"
+                style={{
+                  maxWidth: '100%',
+                  maxHeight: 'calc(90vh - 75px)',
+                  objectFit: 'contain',
+                  borderRadius: '6px'
+                }}
+              />
+            </div>
+          </div>
         </div>
       )}
 

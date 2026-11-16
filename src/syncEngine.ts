@@ -294,7 +294,11 @@ class SyncEngine {
         for (const [key, val] of Object.entries(d)) {
           if (key.startsWith('foto') && typeof val === 'string' && val.startsWith('data:image')) {
             const upUrl = await this.uploadBase64Image(val, 'descartes');
-            if (upUrl) photosPayload[key] = upUrl;
+            if (upUrl) {
+              photosPayload[key] = upUrl;
+            } else {
+              photosPayload[key] = val; // Respaldo seguro en base64 para evitar pérdida de fotos
+            }
           } else if (key.startsWith('foto') && typeof val === 'string') {
             photosPayload[key] = val;
           }
@@ -327,6 +331,24 @@ class SyncEngine {
       // 8. Sincronizar CHECKLISTS
       const pendingChecklists = await db.checklists.filter(chk => (chk as any).syncedSupabase !== 1).toArray();
       for (const chk of pendingChecklists) {
+        // Subir fotos a Supabase Storage si vienen en base64
+        const uploadedPhotos: string[] = [];
+        if (Array.isArray(chk.photos) && chk.photos.length > 0) {
+          for (const p of chk.photos) {
+            if (typeof p === 'string' && p.startsWith('data:image')) {
+              const upUrl = await this.uploadBase64Image(p, 'checklists');
+              uploadedPhotos.push(upUrl || p);
+            } else if (typeof p === 'string') {
+              uploadedPhotos.push(p);
+            }
+          }
+        }
+
+        const itemsWithPhotos = {
+          ...(chk.items || {}),
+          ...(uploadedPhotos.length > 0 ? { _photos: uploadedPhotos } : {})
+        };
+
         const payload = {
           id: String(chk.id || `chk_${Date.now()}`),
           type: chk.type,
@@ -336,7 +358,7 @@ class SyncEngine {
           perforadora: chk.perforadora,
           cantidad_aceros: chk.cantidadAceros,
           obs_aceros: chk.obsAceros,
-          items: chk.items || {},
+          items: itemsWithPhotos,
           user_id: userId,
           updated_at: new Date().toISOString(),
         };
@@ -344,7 +366,11 @@ class SyncEngine {
         const { error } = await supabase.from('checklists').upsert(payload);
         if (!error && chk.id) {
           const isGasDone = (chk as any).syncedGas === 1;
-          await db.checklists.update(chk.id, { syncedSupabase: 1, synced: isGasDone ? 1 : 0 });
+          await db.checklists.update(chk.id, { 
+            syncedSupabase: 1, 
+            synced: isGasDone ? 1 : 0,
+            photos: uploadedPhotos.length > 0 ? uploadedPhotos : chk.photos
+          });
         }
       }
 

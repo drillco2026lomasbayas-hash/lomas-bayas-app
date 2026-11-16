@@ -237,6 +237,7 @@ export interface ChecklistRecord {
   cantidadAceros: string;
   obsAceros: string;
   items: Record<string, string>; // e.g. "Manómetro Presión Rotación": "Bueno | Fuga leve"
+  photos?: string[]; // Array de fotos en Base64 o URLs
   synced: number;
   syncedGas?: number;
   syncedSupabase?: number;

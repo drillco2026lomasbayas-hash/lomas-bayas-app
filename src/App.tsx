@@ -41,7 +41,7 @@ import { getDrillWorstWear } from './utils/steelUtils';
 import { formatDateSafe } from './utils/dateUtils';
 
 // Utilidad para comprimir imágenes y reducir su peso a ~1MB o menos
-const compressImage = (file: File): Promise<string> => {
+export const compressImage = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -1378,8 +1378,13 @@ const App: React.FC = () => {
       // Si el evento ya fue sincronizado, necesitamos eliminarlo del Excel también
       if (event.synced === 1) {
         if (isOnline) {
-          // Eliminar directamente del Excel
+          // Eliminar directamente del Excel y de Supabase
           await deleteEventFromSheet(event.id!, event.title);
+          try {
+            await supabase.from('events').delete().eq('id', String(event.id));
+          } catch (supaErr) {
+            console.warn('Error eliminando evento en Supabase:', supaErr);
+          }
         } else {
           // Guardar la eliminación pendiente para sincronizar después
           await db.pendingDeletions.add({
@@ -1582,6 +1587,17 @@ const App: React.FC = () => {
             .from('inventory_records')
             .update({ stock_data: updatedStock })
             .eq('id', data[0].id);
+        } else {
+          const today = new Date().toISOString().split('T')[0];
+          await supabase
+            .from('inventory_records')
+            .upsert({
+              id: `inv_${today}`,
+              date: today,
+              observations: {},
+              stock_data: { subModels: updated, minStocks: minStocksData },
+              updated_at: new Date().toISOString()
+            });
         }
       }
     } catch (e) {
@@ -1620,6 +1636,17 @@ const App: React.FC = () => {
             .from('inventory_records')
             .update({ stock_data: updatedStock })
             .eq('id', data[0].id);
+        } else {
+          const today = new Date().toISOString().split('T')[0];
+          await supabase
+            .from('inventory_records')
+            .upsert({
+              id: `inv_${today}`,
+              date: today,
+              observations: {},
+              stock_data: { minStocks: updated, subModels: subModelsData },
+              updated_at: new Date().toISOString()
+            });
         }
       }
     } catch (e) {
@@ -1982,9 +2009,12 @@ const App: React.FC = () => {
         const centralVal = (inventoryData[centralKey] as number) || 0;
         const minaVal = (inventoryData[minaKey] as number) || 0;
         const total = centralVal + minaVal;
+        const itemMinStock = minStocksData[item.key] !== undefined ? minStocksData[item.key] : item.minStock;
+        const hasMinStock = itemMinStock !== undefined && itemMinStock !== null;
+        const diffMina = hasMinStock ? minaVal - itemMinStock : null;
 
         const catCell = isFirstInCat
-          ? { content: category.name, rowSpan: catRowCount, styles: { fontStyle: 'bold', fillColor: [235, 240, 250], valign: 'middle', cellWidth: 38 } }
+          ? { content: category.name, rowSpan: catRowCount, styles: { fontStyle: 'bold', fillColor: [235, 240, 250], valign: 'middle', cellWidth: 34 } }
           : null;
         isFirstInCat = false;
 
@@ -1994,6 +2024,16 @@ const App: React.FC = () => {
           { content: item.sap, styles: { halign: 'center', fillColor: hasModels ? [254, 249, 231] : undefined } },
           { content: centralVal.toString(), styles: { halign: 'center', fontStyle: hasModels ? 'bold' : 'normal', fillColor: hasModels ? [254, 249, 231] : undefined } },
           { content: minaVal.toString(), styles: { halign: 'center', fontStyle: hasModels ? 'bold' : 'normal', fillColor: hasModels ? [254, 249, 231] : undefined } },
+          { content: hasMinStock ? itemMinStock.toString() : '—', styles: { halign: 'center', fontStyle: 'bold', textColor: [75, 85, 99], fillColor: hasModels ? [254, 249, 231] : undefined } },
+          { 
+            content: diffMina !== null ? (diffMina >= 0 ? `+${diffMina}` : `${diffMina}`) : '—', 
+            styles: { 
+              halign: 'center', 
+              fontStyle: 'bold', 
+              textColor: diffMina !== null ? (diffMina >= 0 ? [5, 150, 105] : [220, 38, 38]) : [150, 150, 150], 
+              fillColor: hasModels ? [254, 249, 231] : (diffMina !== null && diffMina < 0 ? [254, 242, 242] : undefined) 
+            } 
+          },
           { content: total.toString(), styles: { halign: 'center', fontStyle: 'bold', fillColor: hasModels ? [254, 249, 231] : undefined } }
         ].filter(cell => cell !== null));
 
@@ -2008,6 +2048,8 @@ const App: React.FC = () => {
               { content: item.sap, styles: { halign: 'center', fontSize: 7.5, textColor: [70, 70, 70] } },
               { content: mCentral.toString(), styles: { halign: 'center', fontSize: 7.5 } },
               { content: mMina.toString(), styles: { halign: 'center', fontSize: 7.5 } },
+              { content: '—', styles: { halign: 'center', fontSize: 7.5, textColor: [160, 160, 160] } },
+              { content: '—', styles: { halign: 'center', fontSize: 7.5, textColor: [160, 160, 160] } },
               { content: mTotal.toString(), styles: { halign: 'center', fontSize: 7.5, fontStyle: 'bold' } }
             ]);
           });
@@ -2023,6 +2065,8 @@ const App: React.FC = () => {
         { content: 'N° SAP', styles: { halign: 'center' } },
         { content: 'Bod. Central', styles: { halign: 'center' } },
         { content: 'Bod. Mina', styles: { halign: 'center' } },
+        { content: 'Mín. Mina', styles: { halign: 'center' } },
+        { content: 'Dif. Mina', styles: { halign: 'center' } },
         { content: 'Total', styles: { halign: 'center' } }
       ]],
       body: tableBody,
@@ -2038,18 +2082,20 @@ const App: React.FC = () => {
         fillColor: [0, 122, 255],
         textColor: [255, 255, 255],
         fontStyle: 'bold',
-        fontSize: 9,
+        fontSize: 8.5,
       },
       alternateRowStyles: {
         fillColor: [250, 252, 255]
       },
       columnStyles: {
-        0: { cellWidth: 38 },
+        0: { cellWidth: 34 },
         1: { cellWidth: 'auto' },
-        2: { cellWidth: 26, halign: 'center' },
-        3: { cellWidth: 26, halign: 'center' },
-        4: { cellWidth: 26, halign: 'center' },
-        5: { cellWidth: 24, halign: 'center' },
+        2: { cellWidth: 22, halign: 'center' },
+        3: { cellWidth: 21, halign: 'center' },
+        4: { cellWidth: 21, halign: 'center' },
+        5: { cellWidth: 20, halign: 'center' },
+        6: { cellWidth: 20, halign: 'center' },
+        7: { cellWidth: 20, halign: 'center' },
       },
       didDrawPage: () => {
         // Footer
@@ -3979,12 +4025,12 @@ const App: React.FC = () => {
                                       )}
                                     </div>
                                     <div style={{ fontSize: '0.62rem', fontWeight: 700, color: '#6b7280', letterSpacing: '0.5px' }}>
-                                      MÍNIMO
+                                      MÍN. MINA
                                     </div>
                                   </div>
 
                                   {(() => {
-                                    const diff = actualStock - itemMinStock;
+                                    const diff = minaVal - itemMinStock;
                                     const isPos = diff >= 0;
                                     return (
                                       <div style={{
@@ -4000,7 +4046,9 @@ const App: React.FC = () => {
                                         border: `1px solid ${isPos ? '#a7f3d0' : '#fecaca'}`,
                                         minWidth: '45px',
                                         justifyContent: 'center'
-                                      }}>
+                                      }}
+                                      title={`Stock Bodega Mina: ${minaVal} | Mínimo requerido: ${itemMinStock} | Dif: ${diff >= 0 ? `+${diff}` : diff}`}
+                                      >
                                         {isPos ? <CheckCircle size={13} /> : <AlertTriangle size={13} />}
                                         {diff > 0 ? `+${diff}` : diff}
                                       </div>
@@ -4423,12 +4471,13 @@ const App: React.FC = () => {
                                     )}
                                   </div>
                                   <div style={{ fontSize: '0.55rem', fontWeight: 700, color: '#6b7280' }}>
-                                    MÍN
+                                    MÍN. MINA
                                   </div>
                                 </div>
 
                                 {(() => {
-                                  const diff = actualStock - itemMinStock;
+                                  const minaOnly = (inventoryData[`${item.key}_mina`] || 0);
+                                  const diff = minaOnly - itemMinStock;
                                   const isPos = diff >= 0;
                                   return (
                                     <div style={{
@@ -4442,7 +4491,9 @@ const App: React.FC = () => {
                                       background: isPos ? '#d1fae5' : '#fee2e2',
                                       color: isPos ? '#065f46' : '#991b1b',
                                       border: `1px solid ${isPos ? '#a7f3d0' : '#fecaca'}`
-                                    }}>
+                                    }}
+                                    title={`Stock Bodega Mina: ${minaOnly} | Mínimo requerido: ${itemMinStock} | Dif: ${diff >= 0 ? `+${diff}` : diff}`}
+                                    >
                                       {isPos ? <CheckCircle size={11} /> : <AlertTriangle size={11} />}
                                       {diff > 0 ? `+${diff}` : diff}
                                     </div>
@@ -5286,6 +5337,11 @@ const App: React.FC = () => {
             pdfPreviewModal.doc.save(pdfPreviewModal.fileName);
           }
         }}
+        reportDate={(lastInventoryDate || inventoryDate).split('-').reverse().join('/')}
+        inventoryData={inventoryData}
+        inventoryObs={inventoryObs}
+        subModelsData={subModelsData}
+        minStocksData={minStocksData}
       />
 
       {/* Modal Agregar / Editar Modelo de Producto */}
