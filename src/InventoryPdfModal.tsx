@@ -279,7 +279,6 @@ export const InventoryPdfModal: React.FC<InventoryPdfModalProps> = ({
                       <th style={{ padding: '8px 8px', border: '1px solid #0369a1', minWidth: '85px' }}>N° SAP</th>
                       <th style={{ padding: '8px 8px', border: '1px solid #0369a1', minWidth: '75px' }}>Bod. Central</th>
                       <th style={{ padding: '8px 8px', border: '1px solid #0369a1', minWidth: '75px' }}>Bod. Mina</th>
-                      <th style={{ padding: '8px 8px', border: '1px solid #0369a1', minWidth: '75px', background: '#0369a1' }}>Mín. Mina</th>
                       <th style={{ padding: '8px 8px', border: '1px solid #0369a1', minWidth: '75px', background: '#0369a1' }}>Dif. Mina</th>
                       <th style={{ padding: '8px 8px', border: '1px solid #0369a1', minWidth: '70px', background: '#075985' }}>Total</th>
                     </tr>
@@ -332,9 +331,6 @@ export const InventoryPdfModal: React.FC<InventoryPdfModalProps> = ({
                               <td style={{ padding: '8px', textAlign: 'center', fontWeight: hasModels ? 800 : 600, color: '#047857' }}>
                                 {minaVal}
                               </td>
-                              <td style={{ padding: '8px', textAlign: 'center', fontWeight: 700, color: '#475569' }}>
-                                {hasMinStock ? itemMinStock : '—'}
-                              </td>
                               <td style={{ padding: '8px', textAlign: 'center' }}>
                                 {diffMina !== null ? (
                                   <span style={{
@@ -380,9 +376,6 @@ export const InventoryPdfModal: React.FC<InventoryPdfModalProps> = ({
                                   </td>
                                   <td style={{ padding: '5px', textAlign: 'center', color: '#047857' }}>
                                     {mMina}
-                                  </td>
-                                  <td style={{ padding: '5px', textAlign: 'center', color: '#94a3b8' }}>
-                                    —
                                   </td>
                                   <td style={{ padding: '5px', textAlign: 'center', color: '#94a3b8' }}>
                                     —

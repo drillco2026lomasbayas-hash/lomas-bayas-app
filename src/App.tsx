@@ -2024,7 +2024,6 @@ const App: React.FC = () => {
           { content: item.sap, styles: { halign: 'center', fillColor: hasModels ? [254, 249, 231] : undefined } },
           { content: centralVal.toString(), styles: { halign: 'center', fontStyle: hasModels ? 'bold' : 'normal', fillColor: hasModels ? [254, 249, 231] : undefined } },
           { content: minaVal.toString(), styles: { halign: 'center', fontStyle: hasModels ? 'bold' : 'normal', fillColor: hasModels ? [254, 249, 231] : undefined } },
-          { content: hasMinStock ? itemMinStock.toString() : '—', styles: { halign: 'center', fontStyle: 'bold', textColor: [75, 85, 99], fillColor: hasModels ? [254, 249, 231] : undefined } },
           { 
             content: diffMina !== null ? (diffMina >= 0 ? `+${diffMina}` : `${diffMina}`) : '—', 
             styles: { 
@@ -2049,7 +2048,6 @@ const App: React.FC = () => {
               { content: mCentral.toString(), styles: { halign: 'center', fontSize: 7.5 } },
               { content: mMina.toString(), styles: { halign: 'center', fontSize: 7.5 } },
               { content: '—', styles: { halign: 'center', fontSize: 7.5, textColor: [160, 160, 160] } },
-              { content: '—', styles: { halign: 'center', fontSize: 7.5, textColor: [160, 160, 160] } },
               { content: mTotal.toString(), styles: { halign: 'center', fontSize: 7.5, fontStyle: 'bold' } }
             ]);
           });
@@ -2065,7 +2063,6 @@ const App: React.FC = () => {
         { content: 'N° SAP', styles: { halign: 'center' } },
         { content: 'Bod. Central', styles: { halign: 'center' } },
         { content: 'Bod. Mina', styles: { halign: 'center' } },
-        { content: 'Mín. Mina', styles: { halign: 'center' } },
         { content: 'Dif. Mina', styles: { halign: 'center' } },
         { content: 'Total', styles: { halign: 'center' } }
       ]],
@@ -2088,14 +2085,13 @@ const App: React.FC = () => {
         fillColor: [250, 252, 255]
       },
       columnStyles: {
-        0: { cellWidth: 34 },
+        0: { cellWidth: 36 },
         1: { cellWidth: 'auto' },
-        2: { cellWidth: 22, halign: 'center' },
-        3: { cellWidth: 21, halign: 'center' },
-        4: { cellWidth: 21, halign: 'center' },
-        5: { cellWidth: 20, halign: 'center' },
-        6: { cellWidth: 20, halign: 'center' },
-        7: { cellWidth: 20, halign: 'center' },
+        2: { cellWidth: 24, halign: 'center' },
+        3: { cellWidth: 24, halign: 'center' },
+        4: { cellWidth: 24, halign: 'center' },
+        5: { cellWidth: 22, halign: 'center' },
+        6: { cellWidth: 22, halign: 'center' },
       },
       didDrawPage: () => {
         // Footer
