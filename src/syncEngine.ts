@@ -6,6 +6,7 @@ export interface SyncStatus {
   pendingCount: number;
   lastSyncTime: Date | null;
   error: string | null;
+  isSupabasePaused?: boolean;
 }
 
 type SyncListener = (status: SyncStatus) => void;
@@ -16,6 +17,7 @@ class SyncEngine {
   private lastSyncTime: Date | null = null;
   private lastError: string | null = null;
   private autoSyncInterval: any = null;
+  private isSupabasePaused = false;
 
   constructor() {
     // Escuchar cuando el dispositivo vuelve a tener conexión
@@ -24,6 +26,13 @@ class SyncEngine {
         console.log('🌐 Conexión restaurada. Iniciando sincronización...');
         this.syncAll();
       });
+
+      // Chequeo inicial de salud de Supabase al iniciar la app
+      setTimeout(() => {
+        if (navigator.onLine) {
+          this.checkSupabaseHealth();
+        }
+      }, 1500);
 
       // Auto-sync cada 60 segundos si hay conexión
       this.autoSyncInterval = setInterval(() => {
@@ -56,12 +65,55 @@ class SyncEngine {
       pendingCount,
       lastSyncTime: this.lastSyncTime,
       error: this.lastError,
+      isSupabasePaused: this.isSupabasePaused,
     };
     this.listeners.forEach((l) => l(status));
   }
 
   public async refreshStatus() {
     await this.emitStatus();
+  }
+
+  // Comprueba la salud de la conexión a Supabase y detecta si el proyecto está pausado por inactividad
+  public async checkSupabaseHealth(): Promise<{ isOnline: boolean; isPaused: boolean; error?: string }> {
+    if (!navigator.onLine) {
+      return { isOnline: false, isPaused: false };
+    }
+
+    try {
+      const { error, status } = await supabase.from('profiles').select('id').limit(1);
+
+      if (error) {
+        const msg = (error.message || '').toLowerCase();
+        const isPaused = status === 503 ||
+                         (error as any).status === 503 ||
+                         (error as any).code === '503' ||
+                         msg.includes('paused') ||
+                         msg.includes('project is paused') ||
+                         msg.includes('service unavailable');
+
+        if (isPaused) {
+          this.isSupabasePaused = true;
+          this.lastError = 'El proyecto de Supabase está pausado por inactividad.';
+          this.emitStatus();
+          return { isOnline: true, isPaused: true, error: this.lastError };
+        }
+      }
+
+      this.isSupabasePaused = false;
+      this.emitStatus();
+      return { isOnline: true, isPaused: false };
+    } catch (err: any) {
+      const msg = (err?.message || '').toLowerCase();
+      const isPaused = err?.status === 503 || msg.includes('paused') || msg.includes('503');
+      if (isPaused) {
+        this.isSupabasePaused = true;
+        this.lastError = 'El proyecto de Supabase está pausado por inactividad.';
+        this.emitStatus();
+        return { isOnline: true, isPaused: true, error: this.lastError };
+      }
+      return { isOnline: true, isPaused: false, error: err?.message };
+    }
   }
 
   // Cuenta cuántos registros locales están pendientes de sincronizar
@@ -130,6 +182,13 @@ class SyncEngine {
   // Sincronización completa (Push pendientes + Pull novedades)
   public async syncAll(): Promise<boolean> {
     if (!navigator.onLine || this.isSyncing) return false;
+
+    // Verificar si Supabase está pausado antes de iniciar sincronización
+    const health = await this.checkSupabaseHealth();
+    if (health.isPaused) {
+      console.warn('⚠️ Supabase está pausado por inactividad. Sincronización detenida para salvaguardar datos locales.');
+      return false;
+    }
 
     this.isSyncing = true;
     this.lastError = null;

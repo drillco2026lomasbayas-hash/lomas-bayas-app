@@ -167,7 +167,13 @@ export const RecentRecordsModal: React.FC<RecentRecordsModalProps> = ({
     }
     setSyncing(true);
     try {
-      await syncEngine.syncAll();
+      const ok = await syncEngine.syncAll();
+      if (!ok) {
+        const health = await syncEngine.checkSupabaseHealth();
+        if (health.isPaused) {
+          alert('⚠️ Tu base de datos de Supabase está pausada por inactividad.\n\n🛡️ ¡Tus datos NO se perderán! Están guardados de forma 100% segura en la memoria de este dispositivo.\n\nPara reactivar el proyecto, ingresa a supabase.com/dashboard y haz clic en "Restore project".');
+        }
+      }
       if (onSyncTriggered) onSyncTriggered();
       await loadRecentRecords();
     } catch (err) {
